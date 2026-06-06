@@ -18,32 +18,26 @@ class _ScannerScreenState extends State<ScannerScreen> {
   );
   
   bool _isProcessing = false;
-
-  // 📦 Lista temporal para acumular los paquetes en el almacén (Fase de Carga)
-  // Almacena mapas con la estructura: {'id': 1, 'codigo': 'FAL-123', 'producto': 'Televisor...'}
   final List<Map<String, dynamic>> _listaCargaTemporal = [];
 
   void _onCodeDetected(String codigo) async {
-    // 🔒 CAPA DE CONTROL: Bloquea lecturas si ya se está consultando o está en enfriamiento
     if (_isProcessing) return; 
 
     setState(() => _isProcessing = true);
     _mostrarCargando();
 
     try {
-      // Consulta real a tu backend de Python
       final pedidoData = await _apiDatasource.buscarPedidoPorCodigo(codigo);
       
       if (!mounted) return;
-      Navigator.pop(context); // Cierra el loading
+      Navigator.pop(context); // Cierra loading
 
       final String estadoActual = pedidoData['estado'] ?? 'Asignado';
 
       // ======================================================================
-      // 🚛 LÓGICA A: MODO CARGA (El paquete aún está en el Almacén)
+      // 1️⃣ MODO CARGA (Almacén)
       // ======================================================================
       if (estadoActual == 'Asignado') {
-        // Validar si el paquete ya fue escaneado en esta sesión para evitar duplicados
         bool yaExiste = _listaCargaTemporal.any((p) => p['codigo'] == codigo);
         
         if (yaExiste) {
@@ -51,7 +45,6 @@ class _ScannerScreenState extends State<ScannerScreen> {
           return;
         }
 
-        // Si es nuevo, lo agregamos a la lista temporal en pantalla
         setState(() {
           _listaCargaTemporal.add({
             'id': pedidoData['id'],
@@ -60,7 +53,6 @@ class _ScannerScreenState extends State<ScannerScreen> {
           });
         });
 
-        // Feedback visual rápido de éxito sin romper el flujo de la cámara
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('📦 Paquete $codigo agregado a la carga'),
@@ -69,29 +61,106 @@ class _ScannerScreenState extends State<ScannerScreen> {
           ),
         );
 
-        // Activamos los 2 segundos de gracia para mover la caja antes de leer otra
         _activarTiempoEnfriamiento();
       } 
       // ======================================================================
-      // 🏠 LÓGICA B: MODO ENTREGA (El paquete ya está en la calle "En Ruta")
+      // 2️⃣ MODO ENTREGA (Calle)
       // ======================================================================
       else if (estadoActual == 'En Ruta') {
         _mostrarFichaPedidoEmergente(pedidoData);
       } 
-      // Si el paquete ya fue entregado o tiene otro estado no gestionable
       else {
         _mostrarErrorScan('El paquete ya figura como: $estadoActual');
       }
 
     } catch (e) {
       if (mounted) {
-        Navigator.pop(context); // Cierra el loading si falla la API
+        Navigator.pop(context);
         _mostrarErrorScan(e.toString());
       }
     }
   }
 
-  // 💡 Muestra la ficha del cliente cuando el paquete ya está en camino (Fase Calle)
+  // 💡 Muestra la lista desplegable hacia arriba para eliminar uno por uno
+  void _mostrarMenuDesplegablePaquetes() {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        // StatefulBuilder nos permite actualizar la lista dentro de la persiana en tiempo real
+        return StatefulBuilder(
+          builder: (BuildContext context, StateSetter setModalState) {
+            return Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 20.0),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: Colors.grey[300],
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'DETALLE DE CARGA (${_listaCargaTemporal.length} PAQUETES)',
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.grey),
+                  ),
+                  const SizedBox(height: 12),
+                  _listaCargaTemporal.isEmpty
+                      ? const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 32.0),
+                          child: Center(child: Text('No hay paquetes en el manifiesto actual.', style: TextStyle(color: Colors.grey))),
+                        )
+                      : Flexible(
+                          child: ListView.builder(
+                            shrinkWrap: true,
+                            itemCount: _listaCargaTemporal.length,
+                            itemBuilder: (context, index) {
+                              final item = _listaCargaTemporal[index];
+                              return Card(
+                                elevation: 0,
+                                color: Colors.grey[100],
+                                margin: const EdgeInsets.symmetric(vertical: 4),
+                                child: ListTile(
+                                  dense: true,
+                                  leading: const Icon(Icons.inventory_2_outlined, color: Colors.grey),
+                                  title: Text(item['producto'], style: const TextStyle(fontWeight: FontWeight.bold)),
+                                  subtitle: Text(item['codigo'], style: const TextStyle(color: Colors.blue)),
+                                  trailing: IconButton(
+                                    icon: const Icon(Icons.delete_outline, color: Colors.red, size: 20),
+                                    onPressed: () {
+                                      // ❌ Eliminación uno por uno
+                                      setState(() {
+                                        _listaCargaTemporal.removeAt(index);
+                                      });
+                                      setModalState(() {}); // Refresca ventana emergente
+                                      if (_listaCargaTemporal.isEmpty) {
+                                        Navigator.pop(context); // Cierra si ya no quedan
+                                      }
+                                    },
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   void _mostrarFichaPedidoEmergente(Map<String, dynamic> pedido) {
     final cliente = pedido['clientes'] ?? {};
     final String nombreCliente = cliente['nombre'] ?? 'No especificado';
@@ -153,10 +222,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
                     child: ElevatedButton(
                       style: ElevatedButton.styleFrom(backgroundColor: SagaTheme.primaryGreen, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 14)),
                       onPressed: () async {
-                        // 1. Cerramos esta persiana emergente primero
                         Navigator.pop(context); 
-
-                        // 2. Viajamos a la pantalla completa de gestión pasándole el mapa del pedido
                         final resultado = await Navigator.push(
                           context,
                           MaterialPageRoute(
@@ -164,12 +230,9 @@ class _ScannerScreenState extends State<ScannerScreen> {
                           ),
                         );
 
-                        // 3. Evaluamos cómo regresó el chofer de esa pantalla
                         if (resultado == true) {
-                          // Si guardó con éxito, disparamos los 2 segundos de enfriamiento para no leer en bucle
                           _activarTiempoEnfriamiento();
                         } else {
-                          // Si regresó con la flecha de atrás sin hacer nada, abrimos la escucha al instante
                           setState(() => _isProcessing = false);
                         }
                       },
@@ -184,6 +247,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
       },
     );
   }
+
   void _abrirIngresoManual() {
     final controller = TextEditingController();
     showDialog(
@@ -218,8 +282,6 @@ class _ScannerScreenState extends State<ScannerScreen> {
     try {
       for (var item in _listaCargaTemporal) {
         final int idPedido = item['id'];
-        
-        // 💡 CORRECCIÓN AQUÍ: Se pasan los parámetros nombrados requeridos
         await _apiDatasource.actualizarEstadoPedido(
           pedidoId: idPedido, 
           nuevoEstado: 'En Ruta',
@@ -286,9 +348,9 @@ class _ScannerScreenState extends State<ScannerScreen> {
     return Scaffold(
       body: Column(
         children: [
-          // 🎥 PARTE SUPERIOR: Cámara dinámica (Ocupa el 60% de la pantalla)
+          // 🎥 PARTE SUPERIOR: Cámara dinámica
           Expanded(
-            flex: 8,
+            flex: 7,
             child: Stack(
               children: [
                 MobileScanner(
@@ -327,12 +389,12 @@ class _ScannerScreenState extends State<ScannerScreen> {
             ),
           ),
 
-          // 📦 PARTE INFERIOR: Panel de control adaptable (Ocupa el 40% restante)
+          // 📦 PARTE INFERIOR: Panel de control adaptable simplificado con menú interactivo
           Expanded(
-            flex: 2,
+            flex: 3,
             child: Container(
               color: Colors.white,
-              padding: const EdgeInsets.all(16.0),
+              padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 16.0),
               child: _listaCargaTemporal.isEmpty
                   ? Center(
                       child: Text(
@@ -342,49 +404,40 @@ class _ScannerScreenState extends State<ScannerScreen> {
                       ),
                     )
                   : Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text(
-                              'MANIFIESTO DE CARGA (${_listaCargaTemporal.length})',
-                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.grey),
+                        // Botón de acceso al menú desplegable hacia arriba (Persiana)
+                        InkWell(
+                          onTap: _mostrarMenuDesplegablePaquetes,
+                          borderRadius: BorderRadius.circular(8),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+                            decoration: BoxDecoration(
+                              color: Colors.grey[100],
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: Colors.grey.shade300),
                             ),
-                            TextButton(
-                              onPressed: () => setState(() => _listaCargaTemporal.clear()),
-                              child: const Text('Limpiar todo', style: TextStyle(color: Colors.red, fontSize: 12)),
-                            )
-                          ],
-                        ),
-                        Expanded(
-                          child: ListView.builder(
-                            itemCount: _listaCargaTemporal.length,
-                            itemBuilder: (context, index) {
-                              final item = _listaCargaTemporal[index];
-                              return Card(
-                                elevation: 0,
-                                color: Colors.grey[100],
-                                margin: const EdgeInsets.symmetric(vertical: 4),
-                                child: ListTile(
-                                  dense: true,
-                                  leading: const Icon(Icons.inventory_2_outlined, color: Colors.grey),
-                                  title: Text(item['producto'], style: const TextStyle(fontWeight: FontWeight.bold)),
-                                  subtitle: Text(item['codigo'], style: const TextStyle(color: Colors.blue)),
-                                  trailing: IconButton(
-                                    icon: const Icon(Icons.close, color: Colors.red, size: 18),
-                                    onPressed: () {
-                                      setState(() {
-                                        _listaCargaTemporal.removeAt(index);
-                                      });
-                                    },
-                                  ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Row(
+                                  children: [
+                                    const Icon(Icons.playlist_add_check, color: SagaTheme.primaryGreen),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      'Manifiesto: ${_listaCargaTemporal.length} paquetes escaneados',
+                                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                                    ),
+                                  ],
                                 ),
-                              );
-                            },
+                                const Icon(Icons.keyboard_arrow_up, color: Colors.grey),
+                              ],
+                            ),
                           ),
                         ),
-                        const SizedBox(height: 8),
+                        const SizedBox(height: 16),
+                        
+                        // Botón de acción principal
                         SizedBox(
                           width: double.infinity,
                           child: ElevatedButton(
@@ -392,9 +445,10 @@ class _ScannerScreenState extends State<ScannerScreen> {
                               backgroundColor: SagaTheme.primaryGreen,
                               foregroundColor: Colors.white,
                               padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                             ),
                             onPressed: _procesarDespachoEnRuta,
-                            child: const Text('CONFIRMAR CARGA E INICIAR VIAJE', style: TextStyle(fontWeight: FontWeight.bold)),
+                            child: const Text('CONFIRMAR CARGA E INICIAR VIAJE', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
                           ),
                         ),
                       ],
@@ -406,8 +460,9 @@ class _ScannerScreenState extends State<ScannerScreen> {
     );
   }
 }
-
-// Pintor de máscara personalizado (EvenOdd nativo)
+// ==========================================================================
+// 🎨 PINTOR DE MÁSCARA PERSONALIZADO (EvenOdd nativo para MobileScanner)
+// ==========================================================================
 class QrScannerOverlayShape extends ShapeBorder {
   final Color borderColor;
   final double borderWidth;

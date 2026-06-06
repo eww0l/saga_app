@@ -50,8 +50,17 @@ class _HomeScreenState extends State<HomeScreen> {
       );
 
       if (mounted) {
+        // 🧠 Extracción de la lista cruda desde el origen de datos híbrido
+        final List<PedidoModel> listaOriginal = data['pedidos'] as List<PedidoModel>;
+
+        // 📊 LÓGICA DE ORDENAMIENTO LOGÍSTICO:
+        // Separamos los bloques para que no se mezclen de forma aleatoria
+        final pedidosEnRuta = listaOriginal.where((p) => p.estado == 'En Ruta').toList();
+        final otrosPedidos = listaOriginal.where((p) => p.estado != 'En Ruta').toList();
+
         setState(() {
-          _pedidos = data['pedidos'] as List<PedidoModel>;
+          // Unimos las listas colocando el bloque prioritario "En Ruta" al inicio
+          _pedidos = [...pedidosEnRuta, ...otrosPedidos];
           _cargando = false;
           _error = null;
         });
@@ -94,7 +103,6 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     return Scaffold(
-      // 💡 QUITAMOS AbsorbPointer: Ahora el chofer SÍ puede interactuar estando offline
       body: ListView.builder(
         padding: const EdgeInsets.only(top: 8, bottom: 16),
         itemCount: _pedidos.length,

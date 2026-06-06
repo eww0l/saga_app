@@ -23,7 +23,6 @@ class _PedidoCardState extends State<PedidoCard> {
   }
 
   // 💡 Muestra un menú de opciones al chofer para cambiar el estado
-  // 💡 Muestra un menú de opciones al chofer para cambiar el estado
   void _mostrarOpcionesEstado(BuildContext context) {
     showModalBottomSheet(
       context: context,
@@ -45,17 +44,17 @@ class _PedidoCardState extends State<PedidoCard> {
                 ListTile(
                   leading: const Icon(Icons.directions_run, color: Colors.blue),
                   title: const Text('Poner En Ruta'),
-                  onTap: () => _procesarCambioEstado(context, 'En Ruta'), // 💡 CORREGIDO: Cambiado a onTap
+                  onTap: () => _procesarCambioEstado(context, 'En Ruta'),
                 ),
                 ListTile(
                   leading: const Icon(Icons.check_circle, color: Colors.green),
                   title: const Text('Marcar como Entregado'),
-                  onTap: () => _procesarCambioEstado(context, 'Entregado'), // 💡 CORREGIDO: Cambiado a onTap
+                  onTap: () => _procesarCambioEstado(context, 'Entregado'),
                 ),
                 ListTile(
                   leading: const Icon(Icons.cancel, color: SagaTheme.alertRed),
                   title: const Text('Marcar como No Entregado (Contingencia)'),
-                  onTap: () => _procesarCambioEstado(context, 'No Entregado'), // 💡 CORREGIDO: Cambiado a onTap
+                  onTap: () => _procesarCambioEstado(context, 'No Entregado'),
                 ),
               ],
             ),
@@ -71,7 +70,6 @@ class _PedidoCardState extends State<PedidoCard> {
 
     String? motivo;
 
-    // 🔒 REGLA DE NEGOCIO: Si es "No Entregado", abrimos un prompt para exigir el motivo obligatoriamente
     if (nuevoEstado == 'No Entregado') {
       motivo = await _solicitarMotivoContingencia(context);
       if (motivo == null || motivo.trim().isEmpty) {
@@ -80,16 +78,16 @@ class _PedidoCardState extends State<PedidoCard> {
       }
     }
 
-    // Encendemos un indicador de carga circular en pantalla
     _mostrarCargando();
 
     try {
       final exito = await _apiDatasource.actualizarEstadoPedido(
-        pedidoId: widget.pedido.id, // Asegúrate de que tu modelo use .id o .pedidoId
+        pedidoId: widget.pedido.id,
         nuevoEstado: nuevoEstado,
         motivoContingencia: motivo,
       );
 
+      if (!mounted) return;
       Navigator.pop(context); // Cierra el diálogo de carga
 
       if (exito) {
@@ -99,12 +97,11 @@ class _PedidoCardState extends State<PedidoCard> {
         _mostrarSnackBar('Estado actualizado a "$nuevoEstado" con éxito.');
       }
     } catch (e) {
-      Navigator.pop(context); // Cierra el diálogo de carga si falla
+      if (mounted) Navigator.pop(context); // Cierra el diálogo de carga si falla
       _mostrarSnackBar(e.toString().replaceAll('Exception: ', ''), esError: true);
     }
   }
 
-  // Ventana emergente secundaria para redactar la contingencia
   Future<String?> _solicitarMotivoContingencia(BuildContext context) async {
     final controller = TextEditingController();
     return showDialog<String>(
@@ -166,15 +163,16 @@ class _PedidoCardState extends State<PedidoCard> {
     }
   }
 
-  @override
+ @override
   Widget build(BuildContext context) {
     final bool esAlta = widget.pedido.prioridad == 'Alta';
     final Color colorEstado = _obtenerColorEstado(_estadoActual);
 
     return Card(
       clipBehavior: Clip.antiAlias,
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       child: InkWell(
-        onTap: () => _mostrarOpcionesEstado(context), // 💡 Acción táctil añadida
+        onTap: () => _mostrarOpcionesEstado(context),
         child: Container(
           decoration: BoxDecoration(
             border: Border(
@@ -184,6 +182,7 @@ class _PedidoCardState extends State<PedidoCard> {
               ),
             ),
           ),
+          // 💡 SOLUCIÓN: El ListTile ahora es el ÚNICO hijo (child) del Container
           child: ListTile(
             contentPadding: const EdgeInsets.all(16),
             title: Text(
@@ -193,9 +192,43 @@ class _PedidoCardState extends State<PedidoCard> {
             subtitle: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const SizedBox(height: 4),
-                Text('Código: ${widget.pedido.codigoBarra}', style: TextStyle(color: Colors.grey[600])),
+                const SizedBox(height: 6),
+                Text('Código: ${widget.pedido.codigoBarra}', style: TextStyle(color: Colors.grey[600], fontSize: 13)),
+                
                 const SizedBox(height: 8),
+                // 📍 Dirección del Cliente
+                Row(
+                  children: [
+                    const Icon(Icons.location_on_outlined, size: 16, color: Colors.grey),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        widget.pedido.direccionCliente.trim().isNotEmpty 
+                            ? widget.pedido.direccionCliente 
+                            : 'Dirección no registrada',
+                        style: const TextStyle(fontSize: 13, color: Colors.black87),
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 2,
+                      ),
+                    ),
+                  ],
+                ),
+                
+                const SizedBox(height: 4),
+                // 🛰️ Coordenadas GPS
+                Row(
+                  children: [
+                    const Icon(Icons.pin_drop_outlined, size: 16, color: Colors.blueGrey),
+                    const SizedBox(width: 6),
+                    Text(
+                      'Lat: ${widget.pedido.latitud}  |  Lng: ${widget.pedido.longitud}',
+                      style: TextStyle(fontSize: 11, color: Colors.grey[600], fontFamily: 'monospace'),
+                    ),
+                  ],
+                ),
+                
+                const SizedBox(height: 10),
+                // 🏷️ Estado del pedido
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
@@ -204,7 +237,7 @@ class _PedidoCardState extends State<PedidoCard> {
                   ),
                   child: Text(
                     _estadoActual.toUpperCase(),
-                    style: TextStyle(color: colorEstado, fontSize: 12, fontWeight: FontWeight.bold),
+                    style: TextStyle(color: colorEstado, fontSize: 11, fontWeight: FontWeight.bold),
                   ),
                 ),
               ],
@@ -216,5 +249,4 @@ class _PedidoCardState extends State<PedidoCard> {
         ),
       ),
     );
-  }
-}
+  }}

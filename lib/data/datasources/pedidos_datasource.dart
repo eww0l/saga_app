@@ -1,21 +1,13 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:connectivity_plus/connectivity_plus.dart';
+import 'base_datasource.dart';
 import '../models/pedido_model.dart';
 
-class ApiDatasource {
-  // final String baseUrl = "https://saga-api-546y.onrender.com/api";
-  final String baseUrl = "http://192.168.1.18:8000/api";
-
-  // 🛠️ FUNCIÓN AUXILIAR: Verifica si el dispositivo tiene internet real
-  Future<bool> _verificarInternet() async {
-    final connectivityResult = await Connectivity().checkConnectivity();
-    return !connectivityResult.contains(ConnectivityResult.none);
-  }
+class PedidosDatasource extends BaseDatasource {
 
   // ==========================================================================
-  // 1️⃣ OBTENER PEDIDOS POR COURIER (Híbrido - Control de Seguridad General)
+  // 1️⃣ OBTENER PEDIDOS POR COURIER (Híbrido - Flujo de Manifiesto Diario)
   // ==========================================================================
   Future<Map<String, dynamic>> fetchPedidosPorCourier(
     String courierId,
@@ -24,10 +16,10 @@ class ApiDatasource {
     double? lngGps,
   }) async {
     final prefs = await SharedPreferences.getInstance();
-    final bool tieneInternet = await _verificarInternet();
+    final bool tieneInternet = await verificarInternet();
     final String cacheKey = 'cache_pedidos_$courierId';
 
-    // ❌ CASO OFFLINE: Carga los datos guardados previamente
+    // ❌ CASO OFFLINE: Carga los datos respaldados en SharedPreferences
     if (!tieneInternet) {
       final String? jsonLocal = prefs.getString(cacheKey);
       if (jsonLocal != null) {
@@ -44,7 +36,7 @@ class ApiDatasource {
       }
     }
 
-    // 🌐 CASO ONLINE: Consulta al servidor configurado en baseUrl
+    // 🌐 CASO ONLINE: Consulta directa a FastAPI
     final url = Uri.parse(
       '$baseUrl/pedidos-courier?courier_id=$courierId&empresa=${Uri.encodeComponent(empresa)}'
       '${latGps != null && lngGps != null ? '&lat_gps=$latGps&lng_gps=$lngGps' : ''}',
@@ -55,13 +47,12 @@ class ApiDatasource {
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
 
-      // 🔒 CONTROL DE SEGURIDAD GENERAL:
-      // Si el backend responde con un aviso de error, disparamos la excepción para bloquear el Login
+      // Verificación de seguridad por si las credenciales fallan en caliente
       if (data is Map && data.containsKey('error_detectado')) {
         throw Exception(data['error_detectado']);
       }
 
-      // Guardamos la respuesta cruda en disco solo si es un manifiesto válido
+      // Persistimos en disco duro del móvil para contingencias sin cobertura
       await prefs.setString(cacheKey, response.body);
 
       final List pedidosJson = data['pedidos'] ?? [];
@@ -69,6 +60,7 @@ class ApiDatasource {
       return {
         "pedidos": pedidosJson.map((e) => PedidoModel.fromJson(e)).toList(),
         "ruta_osrm": data['ruta_osrm'] ?? [],
+        "offline_mode": false
       };
     } else {
       throw Exception("Error servidor: ${response.statusCode}");
@@ -76,19 +68,18 @@ class ApiDatasource {
   }
 
   // ==========================================================================
-  // 2️⃣ ACTUALIZAR ESTADO DEL PEDIDO (Soporta cola local si estás offline)
+  // 2️⃣ ACTUALIZAR ESTADO DEL PEDIDO (Con Soporte de Cola Transaccional Offline)
   // ==========================================================================
   Future<bool> actualizarEstadoPedido({
     required int pedidoId,
     required String nuevoEstado,
     String? motivoContingencia,
   }) async {
-    final bool tieneInternet = await _verificarInternet();
+    final bool tieneInternet = await verificarInternet();
 
-    // ❌ CASO OFFLINE: Guarda el cambio en una cola local para subirla después
+    // ❌ CASO OFFLINE: Encolado local y actualización en caliente de la caché
     if (!tieneInternet) {
       final prefs = await SharedPreferences.getInstance();
-      
       List<String> colaPendientes = prefs.getStringList('cola_actualizaciones') ?? [];
       
       Map<String, dynamic> transaccionOffline = {
@@ -101,6 +92,7 @@ class ApiDatasource {
       colaPendientes.add(json.encode(transaccionOffline));
       await prefs.setStringList('cola_actualizaciones', colaPendientes);
 
+      // Barremos las SharedPreferences para mutar el estado localmente de inmediato
       final keys = prefs.getKeys();
       for (String key in keys) {
         if (key.startsWith('cache_pedidos_')) {
@@ -120,7 +112,7 @@ class ApiDatasource {
       return true; 
     }
 
-    // 🌐 CASO ONLINE: Envío directo a FastAPI
+    // 🌐 CASO ONLINE: Mutación síncrona en Supabase
     try {
       String urlString = '$baseUrl/pedidos/$pedidoId/estado?nuevo_estado=$nuevoEstado';
       if (motivoContingencia != null && motivoContingencia.trim().isNotEmpty) {
@@ -143,12 +135,12 @@ class ApiDatasource {
   }
 
   // ==========================================================================
-  // 3️⃣ BUSCADOR POR CÓDIGO DE BARRAS (Soporta escaneo offline desde la caché)
+  // 3️⃣ BUSCADOR POR CÓDIGO DE BARRAS (Soporta escaneo asíncrono e indexación local)
   // ==========================================================================
   Future<Map<String, dynamic>> buscarPedidoPorCodigo(String codigoBarra) async {
-    final bool tieneInternet = await _verificarInternet();
+    final bool tieneInternet = await verificarInternet();
 
-    // ❌ CASO OFFLINE: Busca el código dentro de los datos cacheados en el disco
+    // ❌ CASO OFFLINE: Indexa sobre la caché guardada en disco
     if (!tieneInternet) {
       final prefs = await SharedPreferences.getInstance();
       final keys = prefs.getKeys();
@@ -171,7 +163,7 @@ class ApiDatasource {
       throw Exception("Modo Offline: El paquete $codigoBarra no figura en la carga local.");
     }
 
-    // 🌐 CASO ONLINE: Petición normal a producción
+    // 🌐 CASO ONLINE: Consulta directa al endpoint de escaneo
     try {
       final url = Uri.parse('$baseUrl/pedidos/escanear/$codigoBarra');
       final response = await http.get(url);
@@ -191,7 +183,7 @@ class ApiDatasource {
   }
 
   // ==========================================================================
-  // 4️⃣ OBTENER RUTA COURIER
+  // 4️⃣ OBTENER RUTA COURIER (Consumo de Enrutamiento Geográfico OSRM)
   // ==========================================================================
   Future<Map<String, dynamic>> fetchRutaCourier(
     String courierId,
@@ -223,10 +215,10 @@ class ApiDatasource {
   }
 
   // ==========================================================================
-  // 🔄 5️⃣ SINCRONIZADOR DE COLA OFFLINE (Optimizado)
+  // 🔄 5️⃣ SINCRONIZADOR DE COLA OFFLINE (Vaciado transaccional al recuperar red)
   // ==========================================================================
   Future<void> sincronizarColaPendiente() async {
-    final bool tieneInternet = await _verificarInternet();
+    final bool tieneInternet = await verificarInternet();
     if (!tieneInternet) return;
 
     final prefs = await SharedPreferences.getInstance();
@@ -256,49 +248,5 @@ class ApiDatasource {
     }
 
     await prefs.setStringList('cola_actualizaciones', transaccionesFallidas);
-  }
-
-  // ==========================================================================
-  // 🏢 6️⃣ OBTENER EMPRESAS COURIER ACTIVAS (Catálogo Dinámico)
-  // ==========================================================================
-  Future<List<String>> fetchEmpresasActivas() async {
-    final bool tieneInternet = await _verificarInternet();
-
-    if (!tieneInternet) {
-      final prefs = await SharedPreferences.getInstance();
-      final List<String>? empresasCache = prefs.getStringList('cache_catalogo_empresas');
-      
-      if (empresasCache != null && empresasCache.isNotEmpty) {
-        return empresasCache;
-      }
-      
-      return [
-        'Saga Falabella (Flota Interna)',
-        'Olva Courier (Socio B2B)',
-        'Chazki (Socio B2B)',
-        'Urbano (Socio B2B)'
-      ];
-    }
-
-    try {
-      final url = Uri.parse('$baseUrl/pedidos/empresas-activas');
-      final response = await http.get(url);
-
-      if (response.statusCode == 200) {
-        final Map<String, dynamic> data = json.decode(response.body);
-        final List<dynamic> listaRaw = data['empresas'] ?? [];
-        
-        List<String> empresasDescargadas = listaRaw.map((e) => e.toString()).toList();
-
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setStringList('cache_catalogo_empresas', empresasDescargadas);
-
-        return empresasDescargadas;
-      } else {
-        throw Exception("Error catálogo: Código ${response.statusCode}");
-      }
-    } catch (e) {
-      throw Exception('Error al conectar con el servidor: $e');
-    }
   }
 }

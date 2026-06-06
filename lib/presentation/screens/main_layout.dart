@@ -1,6 +1,6 @@
-import 'dart:async'; // 💡 Necesario para el StreamSubscription
+import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:connectivity_plus/connectivity_plus.dart'; // 💡 Importante para detectar el corte de red
+import 'package:connectivity_plus/connectivity_plus.dart';
 import '../../core/theme.dart';
 import 'home_screen.dart';
 import 'map_screen.dart';
@@ -19,7 +19,7 @@ class MainLayout extends StatefulWidget {
 
 class _MainLayoutState extends State<MainLayout> {
   int _currentIndex = 0;
-  bool _esOffline = false; // 💡 Controla la visibilidad del banner
+  bool _esOffline = false; // Controla la visibilidad del banner naranja
   late StreamSubscription<List<ConnectivityResult>> _connectivitySubscription;
 
   @override
@@ -27,7 +27,7 @@ class _MainLayoutState extends State<MainLayout> {
     super.initState();
     _verificarRedInicial();
 
-    // 📡 ESCUCHA EN TIEMPO REAL: Si apagas el internet, cambia el estado al segundo
+    // 📡 ESCUCHA EN TIEMPO REAL: Detecta instantáneamente si el chofer pierde señal
     _connectivitySubscription = Connectivity().onConnectivityChanged.listen((List<ConnectivityResult> results) {
       if (mounted) {
         setState(() {
@@ -48,10 +48,11 @@ class _MainLayoutState extends State<MainLayout> {
 
   @override
   void dispose() {
-    _connectivitySubscription.cancel(); // 🔒 Evita fugas de memoria al cerrar sesión
+    _connectivitySubscription.cancel(); // 🔒 Evita fugas de memoria al cerrar la jornada
     super.dispose();
   }
   
+  // Lista de las pantallas principales del sistema pasándoles las credenciales
   List<Widget> _getScreens() {
     return [
       HomeScreen(courierId: widget.courierId, empresa: widget.empresa), 
@@ -115,10 +116,9 @@ class _MainLayoutState extends State<MainLayout> {
           ),
         ],
       ),
-      // 💡 Metemos el banner superior y la pantalla seleccionada dentro de una Column
       body: Column(
         children: [
-          // ⚠️ BANNER REACTIVO: Se dibuja en caliente encima de cualquier módulo activo
+          // ⚠️ BANNER REACTIVO: Se inyecta en caliente si el transportista se queda sin cobertura
           if (_esOffline)
             Container(
               color: Colors.orange.shade700,
@@ -136,7 +136,7 @@ class _MainLayoutState extends State<MainLayout> {
               ),
             ),
           
-          // El módulo toma de manera limpia el resto del espacio disponible
+          // El módulo activo (Home, Mapa o Escáner) ocupa el resto de la pantalla de forma limpia
           Expanded(
             child: screens[_currentIndex],
           ),

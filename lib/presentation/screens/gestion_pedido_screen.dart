@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
+import '../../../data/models/pedido_model.dart';
+import '../controllers/gestion_pedido_controller.dart';
 import '../../core/theme.dart';
-import '../../../data/datasources/api_datasource.dart';
 
 class GestionPedidoScreen extends StatefulWidget {
-  final Map<String, dynamic> pedido;
+  final PedidoModel pedido;
 
   const GestionPedidoScreen({super.key, required this.pedido});
 
@@ -12,13 +13,13 @@ class GestionPedidoScreen extends StatefulWidget {
 }
 
 class _GestionPedidoScreenState extends State<GestionPedidoScreen> {
-  final ApiDatasource _apiDatasource = ApiDatasource();
+  // 🔒 El controlador ahora vive de forma segura dentro del ciclo de vida del State
+  late final GestionPedidoController _controller;
+  
   String? _estadoSeleccionado;
   String? _motivoContingencia;
-  bool _isSaving = false;
 
-  // Lista de motivos oficiales según el estándar de Saga Falabella
-  final List<String> _motivos = [
+  final List<String> _motivos = const [
     'Cliente ausente',
     'Dirección incorrecta o no existe',
     'Zona peligrosa / Rechazado por seguridad',
@@ -26,56 +27,20 @@ class _GestionPedidoScreenState extends State<GestionPedidoScreen> {
     'No hubo tiempo para la entrega',
   ];
 
-  void _guardarGestion() async {
-    if (_estadoSeleccionado == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Por favor, seleccione un resultado de entrega.')),
-      );
-      return;
-    }
+  @override
+  void initState() {
+    super.initState();
+    _controller = GestionPedidoController();
+  }
 
-    if (_estadoSeleccionado == 'No Entregado' && _motivoContingencia == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Debe seleccionar obligatoriamente un motivo de contingencia.')),
-      );
-      return;
-    }
-
-    setState(() => _isSaving = true);
-
-    try {
-      // Llamamos a la API con los parámetros nombrados exactos
-      final exito = await _apiDatasource.actualizarEstadoPedido(
-        pedidoId: widget.pedido['id'],
-        nuevoEstado: _estadoSeleccionado!,
-        motivoContingencia: _estadoSeleccionado == 'No Entregado' ? _motivoContingencia : null,
-      );
-
-      if (exito && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('✅ Pedido actualizado a $_estadoSeleccionado'),
-            backgroundColor: SagaTheme.primaryGreen,
-          ),
-        );
-        // Regresamos al escáner de la cámara limpiando la pantalla
-        Navigator.pop(context, true); 
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(e.toString()), backgroundColor: Colors.red),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _isSaving = false);
-    }
+  @override
+  void dispose() {
+    _controller.dispose(); // Limpieza obligatoria para evitar fugas de memoria
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final cliente = widget.pedido['clientes'] ?? {};
-
     return Scaffold(
       appBar: AppBar(
         title: const Text('Registrar Entrega', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
@@ -83,20 +48,24 @@ class _GestionPedidoScreenState extends State<GestionPedidoScreen> {
         foregroundColor: Colors.black,
         elevation: 0,
       ),
-      body: _isSaving 
-        ? const Center(child: CircularProgressIndicator())
-        : Padding(
+      body: ListenableBuilder(
+        listenable: _controller,
+        builder: (context, _) {
+          if (_controller.isSaving) {
+            return const Center(child: CircularProgressIndicator(color: Colors.green));
+          }
+
+          return Padding(
             padding: const EdgeInsets.all(20.0),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Resumen rápido del paquete
-                Text(widget.pedido['codigo_barra'] ?? '', style: const TextStyle(color: Colors.blue, fontWeight: FontWeight.bold)),
-                Text(widget.pedido['descripcion_producto'] ?? '', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                Text(widget.pedido.codigoBarra, style: const TextStyle(color: Colors.blue, fontWeight: FontWeight.bold)),
+                Text(widget.pedido.descripcionProducto, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
                 const Divider(height: 30),
-                Text('Cliente: ${cliente['nombre']}', style: const TextStyle(fontSize: 15)),
+                Text('Cliente: ${widget.pedido.nombreCliente}', style: const TextStyle(fontSize: 15)),
                 const SizedBox(height: 6),
-                Text('Dirección: ${cliente['direccion']}, ${cliente['distrito']}', style: const TextStyle(fontSize: 14, color: Colors.grey)),
+                Text('Dirección: ${widget.pedido.direccionCliente}', style: const TextStyle(fontSize: 14, color: Colors.grey)),
                 const Divider(height: 40),
 
                 const Text('RESULTADO DE LA VISITA', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey, fontSize: 12)),
@@ -142,7 +111,6 @@ class _GestionPedidoScreenState extends State<GestionPedidoScreen> {
                   ),
                 ),
 
-                // Desplegable de Motivos (Solo aparece si se marca como NO ENTREGADO)
                 if (_estadoSeleccionado == 'No Entregado') ...[
                   const SizedBox(height: 20),
                   const Text('MOTIVO DE CONTINGENCIA *', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.red)),
@@ -174,13 +142,42 @@ class _GestionPedidoScreenState extends State<GestionPedidoScreen> {
                       padding: const EdgeInsets.symmetric(vertical: 16),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                     ),
-                    onPressed: _guardarGestion,
+                    onPressed: () async {
+                      if (_estadoSeleccionado == null) {
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Por favor, seleccione un resultado.')));
+                        return;
+                      }
+
+                      // Guardamos la referencia local del contexto antes del proceso asíncrono
+                      final localContext = context;
+
+                      final exito = await _controller.actualizarEstado(
+                        pedido: widget.pedido,
+                        nuevoEstado: _estadoSeleccionado!,
+                        motivo: _motivoContingencia,
+                      );
+
+                      if (!mounted) return;
+
+                      if (exito) {
+                        ScaffoldMessenger.of(localContext).showSnackBar(
+                          const SnackBar(content: Text('✅ Pedido actualizado'), backgroundColor: SagaTheme.primaryGreen),
+                        );
+                        Navigator.pop(localContext, true);
+                      } else if (_controller.errorMessage != null) {
+                        ScaffoldMessenger.of(localContext).showSnackBar(
+                          SnackBar(content: Text(_controller.errorMessage!), backgroundColor: Colors.red),
+                        );
+                      }
+                    },
                     child: const Text('CONFIRMAR Y FINALIZAR GESTIÓN', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
                   ),
                 ),
               ],
             ),
-          ),
+          );
+        },
+      ),
     );
   }
 }

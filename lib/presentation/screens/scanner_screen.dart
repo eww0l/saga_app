@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import '../../core/theme.dart';
-import '../../../data/datasources/api_datasource.dart';
+import '../../../data/datasources/pedidos_datasource.dart'; // Apunta al nuevo datasource unificado
 import 'gestion_pedido_screen.dart';
+import '../../data/models/pedido_model.dart';
 
 class ScannerScreen extends StatefulWidget {
   const ScannerScreen({super.key});
@@ -12,7 +13,8 @@ class ScannerScreen extends StatefulWidget {
 }
 
 class _ScannerScreenState extends State<ScannerScreen> {
-  final ApiDatasource _apiDatasource = ApiDatasource();
+  // 🛠️ Restauración del datasource unificado sin alterar la lógica de los métodos
+  final PedidosDatasource _apiDatasource = PedidosDatasource();
   final MobileScannerController _scannerController = MobileScannerController(
     detectionSpeed: DetectionSpeed.noDuplicates,
   );
@@ -81,7 +83,6 @@ class _ScannerScreenState extends State<ScannerScreen> {
     }
   }
 
-  // 💡 Muestra la lista desplegable hacia arriba para eliminar uno por uno
   void _mostrarMenuDesplegablePaquetes() {
     showModalBottomSheet(
       context: context,
@@ -89,7 +90,6 @@ class _ScannerScreenState extends State<ScannerScreen> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (context) {
-        // StatefulBuilder nos permite actualizar la lista dentro de la persiana en tiempo real
         return StatefulBuilder(
           builder: (BuildContext context, StateSetter setModalState) {
             return Padding(
@@ -137,13 +137,12 @@ class _ScannerScreenState extends State<ScannerScreen> {
                                   trailing: IconButton(
                                     icon: const Icon(Icons.delete_outline, color: Colors.red, size: 20),
                                     onPressed: () {
-                                      // ❌ Eliminación uno por uno
                                       setState(() {
                                         _listaCargaTemporal.removeAt(index);
                                       });
-                                      setModalState(() {}); // Refresca ventana emergente
+                                      setModalState(() {}); 
                                       if (_listaCargaTemporal.isEmpty) {
-                                        Navigator.pop(context); // Cierra si ya no quedan
+                                        Navigator.pop(context); 
                                       }
                                     },
                                   ),
@@ -220,24 +219,32 @@ class _ScannerScreenState extends State<ScannerScreen> {
                   const SizedBox(width: 12),
                   Expanded(
                     child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(backgroundColor: SagaTheme.primaryGreen, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 14)),
-                      onPressed: () async {
-                        Navigator.pop(context); 
-                        final resultado = await Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => GestionPedidoScreen(pedido: pedido),
-                          ),
-                        );
+  style: ElevatedButton.styleFrom(
+    backgroundColor: SagaTheme.primaryGreen, 
+    foregroundColor: Colors.white, 
+    padding: const EdgeInsets.symmetric(vertical: 14),
+  ),
+  onPressed: () async {
+    Navigator.pop(context); 
+    
+    // 🔄 TRADUCCIÓN: Convertimos el mapa dinámico al modelo tipado PedidoModel
+    final pedidoModelado = PedidoModel.fromJson(pedido);
 
-                        if (resultado == true) {
-                          _activarTiempoEnfriamiento();
-                        } else {
-                          setState(() => _isProcessing = false);
-                        }
-                      },
-                      child: const Text('GESTIONAR', style: TextStyle(fontWeight: FontWeight.bold)),
-                    ),
+    final resultado = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => GestionPedidoScreen(pedido: pedidoModelado), // 🚀 Pasamos el objeto correcto
+      ),
+    );
+
+    if (resultado == true) {
+      _activarTiempoEnfriamiento();
+    } else {
+      setState(() => _isProcessing = false);
+    }
+  },
+  child: const Text('GESTIONAR', style: TextStyle(fontWeight: FontWeight.bold)),
+),
                   ),
                 ],
               ),
@@ -348,7 +355,6 @@ class _ScannerScreenState extends State<ScannerScreen> {
     return Scaffold(
       body: Column(
         children: [
-          // 🎥 PARTE SUPERIOR: Cámara dinámica
           Expanded(
             flex: 7,
             child: Stack(
@@ -364,7 +370,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
                 ),
                 Positioned.fill(
                   child: Container(
-                    decoration: ShapeDecoration(
+                    decoration: const ShapeDecoration(
                       shape: QrScannerOverlayShape(
                         borderColor: SagaTheme.primaryGreen,
                         borderRadius: 12,
@@ -388,8 +394,6 @@ class _ScannerScreenState extends State<ScannerScreen> {
               ],
             ),
           ),
-
-          // 📦 PARTE INFERIOR: Panel de control adaptable simplificado con menú interactivo
           Expanded(
             flex: 3,
             child: Container(
@@ -406,7 +410,6 @@ class _ScannerScreenState extends State<ScannerScreen> {
                   : Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        // Botón de acceso al menú desplegable hacia arriba (Persiana)
                         InkWell(
                           onTap: _mostrarMenuDesplegablePaquetes,
                           borderRadius: BorderRadius.circular(8),
@@ -436,8 +439,6 @@ class _ScannerScreenState extends State<ScannerScreen> {
                           ),
                         ),
                         const SizedBox(height: 16),
-                        
-                        // Botón de acción principal
                         SizedBox(
                           width: double.infinity,
                           child: ElevatedButton(
@@ -460,9 +461,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
     );
   }
 }
-// ==========================================================================
-// 🎨 PINTOR DE MÁSCARA PERSONALIZADO (EvenOdd nativo para MobileScanner)
-// ==========================================================================
+
 class QrScannerOverlayShape extends ShapeBorder {
   final Color borderColor;
   final double borderWidth;

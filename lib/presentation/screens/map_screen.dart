@@ -143,7 +143,7 @@ class _MapScreenState extends State<MapScreen> {
       final List<PedidoModel> pedidos = (data['pedidos'] as List<PedidoModel>)
           .where((p) =>
               p.estado != 'Entregado' &&
-              p.estado != 'No entregado' &&
+              p.estado != 'No Entregado' &&
               p.estado != 'Asignado')
           .toList();
 

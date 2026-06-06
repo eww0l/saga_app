@@ -288,7 +288,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
         children: [
           // 🎥 PARTE SUPERIOR: Cámara dinámica (Ocupa el 60% de la pantalla)
           Expanded(
-            flex: 6,
+            flex: 8,
             child: Stack(
               children: [
                 MobileScanner(
@@ -329,7 +329,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
 
           // 📦 PARTE INFERIOR: Panel de control adaptable (Ocupa el 40% restante)
           Expanded(
-            flex: 4,
+            flex: 2,
             child: Container(
               color: Colors.white,
               padding: const EdgeInsets.all(16.0),

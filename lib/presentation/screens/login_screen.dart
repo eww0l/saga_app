@@ -140,6 +140,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
                         DropdownButtonFormField<String>(
                           value: _empresaSeleccionada,
+                          isExpanded: true, // 💡 OBLIGATORIO: Fuerza al dropdown a usar todo el ancho disponible sin salirse
                           decoration: const InputDecoration(
                             labelText: 'Operador Logístico',
                             border: OutlineInputBorder(),
@@ -148,7 +149,12 @@ class _LoginScreenState extends State<LoginScreen> {
                           items: _empresas.map((String value) {
                             return DropdownMenuItem<String>(
                               value: value,
-                              child: Text(value, style: const TextStyle(fontSize: 14)),
+                              child: Text(
+                                value, 
+                                style: const TextStyle(fontSize: 14),
+                                overflow: TextOverflow.ellipsis, // 💡 AGREGA ESTO: Pone el "..." si el texto es muy largo
+                                maxLines: 1, // 💡 AGREGA ESTO: Fuerza a que se mantenga en una sola línea
+                              ),
                             );
                           }).toList(),
                           onChanged: (newValue) {

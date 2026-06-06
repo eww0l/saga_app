@@ -1,0 +1,3 @@
+-keep class com.king.mlkit.scanner.** { *; }
+-keep class com.google.mlkit.** { *; }
+-dontwarn com.google.mlkit.**

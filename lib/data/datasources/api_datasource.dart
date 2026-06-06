@@ -3,7 +3,7 @@ import 'package:http/http.dart' as http;
 import '../models/pedido_model.dart';
 
 class ApiDatasource {
-  final String baseUrl = "http://10.0.2.2:8000/api"; 
+  final String baseUrl = "https://saga-api-546y.onrender.com/api"; 
 
   // 💡 ÚNICO MÉTODO PARA ACTUALIZAR ESTADO (Soporta carga y entregas/contingencias)
   Future<bool> actualizarEstadoPedido({

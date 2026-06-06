@@ -1,4 +1,6 @@
+import 'dart:async'; // 💡 Necesario para el StreamSubscription
 import 'package:flutter/material.dart';
+import 'package:connectivity_plus/connectivity_plus.dart'; // 💡 Importante para detectar el corte de red
 import '../../core/theme.dart';
 import 'home_screen.dart';
 import 'map_screen.dart';
@@ -17,18 +19,44 @@ class MainLayout extends StatefulWidget {
 
 class _MainLayoutState extends State<MainLayout> {
   int _currentIndex = 0;
+  bool _esOffline = false; // 💡 Controla la visibilidad del banner
+  late StreamSubscription<List<ConnectivityResult>> _connectivitySubscription;
+
+  @override
+  void initState() {
+    super.initState();
+    _verificarRedInicial();
+
+    // 📡 ESCUCHA EN TIEMPO REAL: Si apagas el internet, cambia el estado al segundo
+    _connectivitySubscription = Connectivity().onConnectivityChanged.listen((List<ConnectivityResult> results) {
+      if (mounted) {
+        setState(() {
+          _esOffline = results.contains(ConnectivityResult.none);
+        });
+      }
+    });
+  }
+
+  void _verificarRedInicial() async {
+    final connectivityResult = await Connectivity().checkConnectivity();
+    if (mounted) {
+      setState(() {
+        _esOffline = connectivityResult.contains(ConnectivityResult.none);
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _connectivitySubscription.cancel(); // 🔒 Evita fugas de memoria al cerrar sesión
+    super.dispose();
+  }
   
-  // 💡 SOLUCIÓN MAESTRA: En lugar de inicializar la lista en el initState, 
-  // la generamos dinámicamente en el build. Así evitamos cualquier conflicto 
-  // de sincronización de parámetros con la HomeScreen al compilar.
   List<Widget> _getScreens() {
     return [
       HomeScreen(courierId: widget.courierId, empresa: widget.empresa), 
-      MapScreen(
-  courierId: widget.courierId,
-  empresa: widget.empresa,
-),                     
-      ScannerScreen(),                 
+      MapScreen(courierId: widget.courierId, empresa: widget.empresa),                     
+      const ScannerScreen(),                 
     ];
   }
 
@@ -69,25 +97,51 @@ class _MainLayoutState extends State<MainLayout> {
         title: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
+            const Text(
               'FALABELLA LOGÍSTICA', 
               style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
             ),
             Text(
               '${widget.empresa} • ID: ${widget.courierId}',
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w400, color: Colors.white70),
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w400, color: Colors.white70),
             ),
           ],
         ),
         actions: [
           IconButton(
-            icon: Icon(Icons.logout_outlined, color: Colors.white),
+            icon: const Icon(Icons.logout_outlined, color: Colors.white),
             tooltip: 'Cerrar Sesión',
             onPressed: _cerrarSesion,
           ),
         ],
       ),
-      body: screens[_currentIndex],
+      // 💡 Metemos el banner superior y la pantalla seleccionada dentro de una Column
+      body: Column(
+        children: [
+          // ⚠️ BANNER REACTIVO: Se dibuja en caliente encima de cualquier módulo activo
+          if (_esOffline)
+            Container(
+              color: Colors.orange.shade700,
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              child: const Text(
+                '⚠️ MODO SIN CONEXIÓN - LECTURA DE RESPALDO LOCAL',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Colors.white, 
+                  fontSize: 11, 
+                  fontWeight: FontWeight.bold, 
+                  letterSpacing: 0.5
+                ),
+              ),
+            ),
+          
+          // El módulo toma de manera limpia el resto del espacio disponible
+          Expanded(
+            child: screens[_currentIndex],
+          ),
+        ],
+      ),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentIndex,
         selectedItemColor: SagaTheme.primaryGreen,
@@ -95,7 +149,7 @@ class _MainLayoutState extends State<MainLayout> {
         onTap: (index) {
           setState(() => _currentIndex = index);
         },
-        items: [
+        items: const [
           BottomNavigationBarItem(
             icon: Icon(Icons.local_shipping),
             label: 'Hoja de Ruta',

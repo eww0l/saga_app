@@ -1,6 +1,7 @@
+import 'dart:async'; // 💡 OBLIGATORIO: Para poder usar el StreamSubscription
 import 'package:flutter/material.dart';
-import 'package:flutter_map/flutter_map.dart'; // 🗺️ OpenStreetMap Libre
-import 'package:latlong2/latlong.dart'; // Coordenadas nativas del mapa
+import 'package:flutter_map/flutter_map.dart'; 
+import 'package:latlong2/latlong.dart'; 
 import 'package:geolocator/geolocator.dart';
 
 import '../../core/theme.dart';
@@ -29,16 +30,29 @@ class _MapScreenState extends State<MapScreen> {
 
   bool _actualizando = false;
   bool _cargando = true;
+  bool _mapaListo = false; // 💡 SOLUCIÓN: Bandera para saber si el mapa ya se renderizó
 
   List<Marker> _marcadores = [];
   List<Polyline> _polilineasRuta = [];
+  
   Stream<Position>? _gpsStream;
+  StreamSubscription<Position>? _gpsSubscription; 
 
   @override
   void initState() {
     super.initState();
     _inicializarGpsYViaje();
     _iniciarTrackingEnTiempoReal();
+  }
+
+  @override
+  void dispose() {
+    // 🔒 Cancelamos de inmediato la escucha nativa para liberar el hardware
+    if (_gpsSubscription != null) {
+      _gpsSubscription!.cancel();
+    }
+    _mapController.dispose();
+    super.dispose();
   }
 
   // 🛰️ GPS manual inicial
@@ -62,9 +76,15 @@ class _MapScreenState extends State<MapScreen> {
         desiredAccuracy: LocationAccuracy.high,
       );
 
-      _miUbicacion =
-          LatLng(posicion.latitude, posicion.longitude);
-          _mapController.move(_miUbicacion, _mapController.camera.zoom);
+      if (!mounted) return;
+      setState(() {
+        _miUbicacion = LatLng(posicion.latitude, posicion.longitude);
+      });
+
+      // 🔒 Mover el mapa solo si ya está completamente montado en el árbol
+      if (_mapaListo) {
+        _mapController.move(_miUbicacion, _mapController.camera.zoom);
+      }
 
       _descargarEInterpretarRuta();
     } catch (e) {
@@ -74,9 +94,9 @@ class _MapScreenState extends State<MapScreen> {
     }
   }
 
-  // 📡 Tracking en tiempo real
+  // 📡 Tracking en tiempo real continuado
   void _iniciarTrackingEnTiempoReal() async {
-    LocationPermission permiso = await Geolocator.requestPermission();
+    LocationPermission permiso = await Geolocator.checkPermission();
 
     if (permiso == LocationPermission.denied ||
         permiso == LocationPermission.deniedForever) {
@@ -91,16 +111,23 @@ class _MapScreenState extends State<MapScreen> {
       ),
     );
 
-    _gpsStream!.listen((Position posicion) {
-      _miUbicacion =
-          LatLng(posicion.latitude, posicion.longitude);
-          _mapController.move(_miUbicacion, _mapController.camera.zoom);
+    _gpsSubscription = _gpsStream!.listen((Position posicion) {
+      if (!mounted) return; 
+
+      setState(() {
+        _miUbicacion = LatLng(posicion.latitude, posicion.longitude);
+      });
+
+      // 🔒 Evitamos crasheos por llamadas rápidas del GPS
+      if (_mapaListo) {
+        _mapController.move(_miUbicacion, _mapController.camera.zoom);
+      }
 
       _descargarEInterpretarRuta();
     });
   }
 
-  // 🧠 Ruta + marcadores
+  // 🧠 Ruta + marcadores secuenciales
   Future<void> _descargarEInterpretarRuta() async {
     if (_actualizando) return;
     _actualizando = true;
@@ -113,16 +140,14 @@ class _MapScreenState extends State<MapScreen> {
         lngGps: _miUbicacion.longitude,
       );
 
-      final List<PedidoModel> pedidos =
-    (data['pedidos'] as List<PedidoModel>)
-        .where((p) =>
-            p.estado != 'Entregado' &&
-            p.estado != 'No entregado')
-        .toList();
+      final List<PedidoModel> pedidos = (data['pedidos'] as List<PedidoModel>)
+          .where((p) =>
+              p.estado != 'Entregado' &&
+              p.estado != 'No entregado' &&
+              p.estado != 'Asignado')
+          .toList();
 
-      final List<dynamic> rutaRaw =
-          data['ruta_osrm'] as List<dynamic>;
-
+      final List<dynamic> rutaRaw = data['ruta_osrm'] as List<dynamic>;
       List<LatLng> puntosDeLaLinea;
 
       if (rutaRaw.isNotEmpty) {
@@ -135,15 +160,13 @@ class _MapScreenState extends State<MapScreen> {
       } else {
         puntosDeLaLinea = [
           _miUbicacion,
-          ...pedidos.map(
-            (p) => LatLng(p.latitud, p.longitud),
-          )
+          ...pedidos.map((p) => LatLng(p.latitud, p.longitud))
         ];
       }
 
       final List<Marker> nuevosMarcadores = [];
 
-      // 🚚 courier
+      // 🚚 Courier
       nuevosMarcadores.add(
         Marker(
           point: _miUbicacion,
@@ -157,7 +180,7 @@ class _MapScreenState extends State<MapScreen> {
         ),
       );
 
-      // 📦 pedidos
+      // 📦 Pedidos
       for (final pedido in pedidos) {
         nuevosMarcadores.add(
           Marker(
@@ -166,15 +189,14 @@ class _MapScreenState extends State<MapScreen> {
             height: 45,
             child: Icon(
               Icons.location_on,
-              color: pedido.prioridad == 'Alta'
-                  ? Colors.red
-                  : Colors.green,
+              color: pedido.prioridad == 'Alta' ? Colors.red : Colors.green,
               size: 42,
             ),
           ),
         );
       }
 
+      if (!mounted) return;
       setState(() {
         _marcadores = nuevosMarcadores;
         _polilineasRuta = [
@@ -187,25 +209,18 @@ class _MapScreenState extends State<MapScreen> {
           )
         ];
         _cargando = false;
+        _actualizando = false; 
       });
 
-      _actualizando = false;
     } catch (e) {
-      setState(() => _cargando = false);
+      if (mounted) {
+        setState(() {
+          _cargando = false;
+          _actualizando = false; 
+        });
+      }
       debugPrint("ERROR MAPA: $e");
     }
-  }
-
-  void _mostrarMiniDetalle(PedidoModel pedido) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          '📦 [${pedido.prioridad}] ${pedido.descripcionProducto}\n📍 ${pedido.direccionCliente}',
-        ),
-        backgroundColor: Colors.black87,
-        duration: const Duration(seconds: 3),
-      ),
-    );
   }
 
   @override
@@ -213,18 +228,21 @@ class _MapScreenState extends State<MapScreen> {
     return Scaffold(
       body: _cargando
           ? const Center(child: CircularProgressIndicator())
-          : FlutterMap( mapController:_mapController,
+          : FlutterMap( 
+              mapController: _mapController,
               options: MapOptions(
                 initialCenter: _miUbicacion,
                 initialZoom: 13.5,
+                // 💡 SOLUCIÓN CLAVE: Se activa solo cuando Flutter avisa que el mapa está listo
+                onMapReady: () {
+                  _mapaListo = true;
+                },
               ),
               children: [
                 TileLayer(
-                  urlTemplate:
-                      'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                   userAgentPackageName: 'com.saga.app',
                 ),
-
                 PolylineLayer(polylines: _polilineasRuta),
                 MarkerLayer(markers: _marcadores),
               ],

@@ -3,6 +3,7 @@ import '../controllers/home_controller.dart';
 import '../widgets/home/home_loading_error.dart';
 import '../widgets/home/home_empty_state.dart';
 import '../widgets/pedido_card.dart';
+import 'package:shared_preferences/shared_preferences.dart'; // Asegúrate de tener el import arriba
 
 class HomeScreen extends StatefulWidget {
   final String courierId;
@@ -20,10 +21,10 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    // Encendemos el motor lógico del controlador pasándole las credenciales
     _controller.inicializar(widget.courierId, widget.empresa);
 
-    // Escuchamos los cambios del controlador para redibujar la UI al instante
+    // ✅ YA NO HAY BORRADO DE EMERGENCIA AQUÍ. LA COLA SOBREVIVE.
+
     _controller.addListener(() {
       if (mounted) setState(() {});
     });
@@ -35,6 +36,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _controller.dispose();
     super.dispose();
   }
+  
 
   @override
   Widget build(BuildContext context) {
@@ -63,10 +65,17 @@ class _HomeScreenState extends State<HomeScreen> {
           padding: const EdgeInsets.only(top: 8, bottom: 16),
           itemCount: _controller.pedidos.length,
           itemBuilder: (context, index) {
-            return PedidoCard(pedido: _controller.pedidos[index]);
+            // 🚀 SOLUCIÓN DEFINITIVA: Inyectamos los 3 parámetros requeridos por el constructor
+            return PedidoCard(
+              pedido: _controller.pedidos[index],
+              courierId: widget.courierId, 
+              onEstadoActualizado: () {
+                // Cada vez que la tarjeta mute (Online u Offline), fuerza al HomeController a refrescar el listado
+                _controller.actualizarDatos(widget.courierId, widget.empresa);
+              },
+            );
           },
         ),
       ),
     );
-  }
-}
+  } }

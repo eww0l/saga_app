@@ -1,4 +1,7 @@
+import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import '../../../data/models/pedido_model.dart';
 import '../controllers/gestion_pedido_controller.dart';
 import '../../core/theme.dart';
@@ -156,22 +159,74 @@ class _GestionPedidoScreenState extends State<GestionPedidoScreen> {
                       }
 
                       final localContext = context;
+                      String? imagenBase64;
 
-                      // 🔒 SOLUCCIÓN INTERNA: Pasamos el courierId inyectado desde la vista anterior
+                      // 📸 FLUJO VISUAL OPCIONAL PARA ADJUNTAR FOTO
+                      if (_estadoSeleccionado == 'Entregado' || _estadoSeleccionado == 'No Entregado') {
+                        
+                        // Levantamos un cuadro de diálogo para que el chofer decida libremente
+                        bool? quiereTomarFoto = await showDialog<bool>(
+                          context: context,
+                          barrierDismissible: false, // Obliga a marcar una opción
+                          builder: (BuildContext context) {
+                            return AlertDialog(
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                              title: const Text('Evidencia Fotográfica', style: TextStyle(fontWeight: FontWeight.bold)),
+                              content: Text('¿Desea capturar una fotografía para respaldar el estado "$_estadoSeleccionado"?'),
+                              actions: [
+                                TextButton(
+                                  onPressed: () => Navigator.pop(context, false), // No toma foto
+                                  child: const Text('NO, OMITIR', style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold)),
+                                ),
+                                ElevatedButton(
+                                  style: ElevatedButton.styleFrom(backgroundColor: SagaTheme.primaryGreen),
+                                  onPressed: () => Navigator.pop(context, true), // Sí toma foto
+                                  child: const Text('SÍ, CÁMARA', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                                ),
+                              ],
+                            );
+                          },
+                        );
+
+                        // Si el chofer eligió "SÍ, CÁMARA", recién ahí encendemos el hardware de la cámara
+                        if (quiereTomarFoto == true) {
+                          try {
+                            final picker = ImagePicker();
+                            final XFile? foto = await picker.pickImage(
+                              source: ImageSource.camera,
+                              imageQuality: 60,
+                              maxWidth: 1200,   
+                            );
+
+                            if (foto != null) {
+                              final List<int> bytes = await File(foto.path).readAsBytes();
+                              imagenBase64 = base64Encode(bytes);
+                            }
+                          } catch (e) {
+                            ScaffoldMessenger.of(localContext).showSnackBar(
+                              SnackBar(content: Text('Error al procesar la cámara: $e'), backgroundColor: Colors.red)
+                            );
+                            return;
+                          }
+                        }
+                      }
+
+                      // Lanzamos la actualización enviando la foto (si se tomó) o null (si se omitió)
                       final exito = await _controller.actualizarEstado(
                         pedido: widget.pedido,
                         nuevoEstado: _estadoSeleccionado!,
                         courierId: widget.courierId, 
                         motivo: _motivoContingencia,
+                        fotoBase64: imagenBase64, 
                       );
 
                       if (!mounted) return;
 
                       if (exito) {
                         ScaffoldMessenger.of(localContext).showSnackBar(
-                          const SnackBar(content: Text('✅ Pedido actualizado'), backgroundColor: SagaTheme.primaryGreen),
+                          const SnackBar(content: Text('✅ Pedido actualizado y evidencia sincronizada'), backgroundColor: SagaTheme.primaryGreen),
                         );
-                        Navigator.pop(localContext, true);
+                        Navigator.pop(localContext, true); 
                       } else if (_controller.errorMessage != null) {
                         ScaffoldMessenger.of(localContext).showSnackBar(
                           SnackBar(content: Text(_controller.errorMessage!), backgroundColor: Colors.red),

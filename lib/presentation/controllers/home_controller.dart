@@ -31,19 +31,24 @@ class HomeController extends ChangeNotifier {
     _cargarDatosHibridos(courierId, empresa);
 
     _connectivitySubscription = Connectivity().onConnectivityChanged.listen((results) async {
-      // 🔒 Validamos de inmediato si el controlador ya fue destruido
       if (_isDisposed) return;
 
       final bool tieneInternet = !results.contains(ConnectivityResult.none);
       if (tieneInternet) {
         try {
+          // 1️⃣ Esperamos a que la cola termine de enviar las transacciones pendientes
           await _datasource.sincronizarColaPendiente();
+          
+          // ⏳ 2️⃣ AMORTIGUACIÓN CRÍTICA: Le damos 1.5 segundos a Supabase para que termine 
+          // de procesar la foto pesada y guardar el estado antes de pedir el manifiesto de vuelta.
+          await Future.delayed(const Duration(milliseconds: 1500));
+          
         } catch (_) {
-          // Evitamos que un fallo en la sincronización rompa el stream
+          // Evitamos que un fallo de red residual rompa el stream de conectividad
         }
       }
 
-      // Volvemos a validar antes de procesar la carga asíncrona
+      // 3️⃣ Recién aquí descargamos los datos actualizados, garantizando que el GET no pise al PUT
       if (!_isDisposed) {
         _cargarDatosHibridos(courierId, empresa);
       }

@@ -19,7 +19,6 @@ class PedidosDatasource extends BaseDatasource {
     final bool tieneInternet = await verificarInternet();
     final String cacheKey = 'cache_pedidos_$courierId';
 
-    // ❌ CASO OFFLINE: Carga los datos respaldados en SharedPreferences
     if (!tieneInternet) {
       final String? jsonLocal = prefs.getString(cacheKey);
       if (jsonLocal != null) {
@@ -36,7 +35,6 @@ class PedidosDatasource extends BaseDatasource {
       }
     }
 
-    // 🌐 CASO ONLINE: Consulta directa a FastAPI
     final url = Uri.parse(
       '$baseUrl/pedidos-courier?courier_id=$courierId&empresa=${Uri.encodeComponent(empresa)}'
       '${latGps != null && lngGps != null ? '&lat_gps=$latGps&lng_gps=$lngGps' : ''}',
@@ -66,17 +64,18 @@ class PedidosDatasource extends BaseDatasource {
   }
 
   // ==========================================================================
-  // 2️⃣ ACTUALIZAR ESTADO DEL PEDIDO (🔒 CORREGIDO: Con firma de Courier)
+  // 2️⃣ ACTUALIZAR ESTADO DEL PEDIDO (🔒 CORREGIDO: Envío de null real)
   // ==========================================================================
   Future<bool> actualizarEstadoPedido({
     required int pedidoId,
     required String nuevoEstado,
-    required String courierId, // 🔒 Parámetro obligatorio integrado
+    required String courierId, 
     String? motivoContingencia,
+    String? fotoBase64, 
   }) async {
     final bool tieneInternet = await verificarInternet();
 
-    // ❌ CASO OFFLINE: Encolado local y actualización en caliente de la caché
+    // ❌ CASO OFFLINE
     if (!tieneInternet) {
       final prefs = await SharedPreferences.getInstance();
       List<String> colaPendientes = prefs.getStringList('cola_actualizaciones') ?? [];
@@ -84,8 +83,9 @@ class PedidosDatasource extends BaseDatasource {
       Map<String, dynamic> transaccionOffline = {
         'pedido_id': pedidoId,
         'nuevo_estado': nuevoEstado,
-        'courier_id': courierId, // Guardamos el dueño del cambio en la cola
+        'courier_id': courierId,
         'motivo_contingencia': motivoContingencia ?? '',
+        'foto_base64': fotoBase64 ?? '', 
         'timestamp': DateTime.now().toIso8601String(),
       };
 
@@ -102,6 +102,7 @@ class PedidosDatasource extends BaseDatasource {
             for (var p in pedidos) {
               if (p['id'] == pedidoId) {
                 p['estado'] = nuevoEstado; 
+                if (fotoBase64 != null) p['evidencia_url'] = 'local_cached_image';
               }
             }
             await prefs.setString(key, json.encode(data));
@@ -111,15 +112,28 @@ class PedidosDatasource extends BaseDatasource {
       return true; 
     }
 
-    // 🌐 CASO ONLINE: Mutación síncrona añadiendo validación courier_id
+    // 🌐 CASO ONLINE
     try {
       String urlString = '$baseUrl/pedidos/$pedidoId/estado?nuevo_estado=$nuevoEstado&courier_id=$courierId';
+      
       if (motivoContingencia != null && motivoContingencia.trim().isNotEmpty) {
         urlString += '&motivo_contingencia=${Uri.encodeComponent(motivoContingencia)}';
       }
 
       final url = Uri.parse(urlString);
-      final response = await http.put(url);
+      
+      // 🚀 CORRECCIÓN: Mandamos null explícito en lugar de "" si no hay foto para no confundir a Pydantic
+      final Map<String, dynamic> jsonBody = {
+        'foto_base64': (fotoBase64 != null && fotoBase64.trim().isNotEmpty) ? fotoBase64 : null
+      };
+
+      final response = await http.put(
+        url,
+        headers: {
+          'Content-Type': 'application/json; charset=UTF-8', 
+        },
+        body: json.encode(jsonBody), 
+      ).timeout(const Duration(seconds: 25)); 
 
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = json.decode(response.body);
@@ -134,16 +148,15 @@ class PedidosDatasource extends BaseDatasource {
   }
 
   // ==========================================================================
-  // 3️⃣ BUSCADOR POR CÓDIGO DE BARRAS (🔒 CORREGIDO: Filtro B2B integrado)
+  // 3️⃣ BUSCADOR POR CÓDIGO DE BARRAS (Filtro B2B integrado)
   // ==========================================================================
   Future<Map<String, dynamic>> buscarPedidoPorCodigo(
     String codigoBarra, {
-    required String courierId, // 🔒 Parámetro obligatorio integrado
-    required String empresa,   // 🔒 Parámetro obligatorio integrado
+    required String courierId, 
+    required String empresa,   
   }) async {
     final bool tieneInternet = await verificarInternet();
 
-    // ❌ CASO OFFLINE: Indexa sobre la caché guardada en disco
     if (!tieneInternet) {
       final prefs = await SharedPreferences.getInstance();
       final keys = prefs.getKeys();
@@ -166,7 +179,6 @@ class PedidosDatasource extends BaseDatasource {
       throw Exception("Modo Offline: El paquete $codigoBarra no figura en la carga local.");
     }
 
-    // 🌐 CASO ONLINE: Consulta directa inyectando credenciales de sesión en Query
     try {
       final url = Uri.parse(
         '$baseUrl/pedidos/escanear/$codigoBarra?courier_id=$courierId&empresa=${Uri.encodeComponent(empresa)}'
@@ -219,23 +231,34 @@ class PedidosDatasource extends BaseDatasource {
     }
   }
 
-  // ==========================================================================
-  // 🔄 5️⃣ SINCRONIZADOR DE COLA OFFLINE (🔒 CORREGIDO: Lee courier_id de la cola)
+// ==========================================================================
+  // 🔄 5️⃣ SINCRONIZADOR DE COLA OFFLINE (🔒 CON AUDITORÍA EXTREMA POR TERMINAL)
   // ==========================================================================
   Future<void> sincronizarColaPendiente() async {
     final bool tieneInternet = await verificarInternet();
-    if (!tieneInternet) return;
+    if (!tieneInternet) {
+      print('🛰️ [SYNC] Intento de sincronización cancelado: Sin conexión real a Internet.');
+      return;
+    }
 
     final prefs = await SharedPreferences.getInstance();
     List<String> colaPendientes = prefs.getStringList('cola_actualizaciones') ?? [];
-    if (colaPendientes.isEmpty) return;
+    
+    // 👁️ INSPECCIÓN GENERAL
+    print('🔥 [SYNC] TOTAL DE PEDIDOS ESPERANDO EN COLA OFFLINE (QUEUED): ${colaPendientes.length}');
+    if (colaPendientes.isEmpty) {
+      print('✅ [SYNC] Nada que sincronizar. La cola está limpia.');
+      return;
+    }
 
     List<String> transaccionesFallidas = [];
 
-    for (String txString in colaPendientes) {
+    for (int i = 0; i < colaPendientes.length; i++) {
+      String txString = colaPendientes[i];
       try {
         final Map<String, dynamic> tx = json.decode(txString);
-        // Extraemos el dueño de la transacción offline mapeado en la cola
+        print('📦 [SYNC] Procesando elemento [${i + 1}/${colaPendientes.length}] -> Pedido ID: ${tx['pedido_id']} | Pasar a: ${tx['nuevo_estado']}');
+
         String urlString = '$baseUrl/pedidos/${tx['pedido_id']}/estado?nuevo_estado=${tx['nuevo_estado']}&courier_id=${tx['courier_id'] ?? ''}';
         
         if (tx['motivo_contingencia'] != null && tx['motivo_contingencia'].toString().trim().isNotEmpty) {
@@ -243,16 +266,35 @@ class PedidosDatasource extends BaseDatasource {
         }
 
         final url = Uri.parse(urlString);
-        final response = await http.put(url);
+        final String? foto = tx['foto_base64'];
+        final Map<String, dynamic> jsonBody = {
+          'foto_base64': (foto != null && foto.trim().isNotEmpty) ? foto : null
+        };
 
-        if (response.statusCode != 200) {
+        print('🚀 [SYNC] Enviando petición PUT al servidor para Pedido ${tx['pedido_id']}...');
+        
+        final response = await http.put(
+          url,
+          headers: {'Content-Type': 'application/json; charset=UTF-8'},
+          body: json.encode(jsonBody),
+        ).timeout(const Duration(seconds: 30));
+
+        // 👁️ INSPECCIÓN DE RESPUESTA DEL SERVIDOR
+        print('📥 [SYNC] Servidor respondió para Pedido ${tx['pedido_id']} -> STATUS CODE: ${response.statusCode}');
+        
+        if (response.statusCode == 200) {
+          print('🎉 [SYNC] ¡ÉXITO! Pedido ${tx['pedido_id']} sincronizado y procesado en Supabase.');
+        } else {
+          print('🚨 [SYNC] ERROR: El servidor rechazó la sincronización. Body: ${response.body}');
           transaccionesFallidas.add(txString); 
         }
       } catch (e) {
+        print('💥 [SYNC] CRASH CRÍTICO procesando elemento de la cola: $e');
         transaccionesFallidas.add(txString);
       }
     }
 
     await prefs.setStringList('cola_actualizaciones', transaccionesFallidas);
+    print('📊 [SYNC] Proceso terminado. Elementos retenidos en cola por fallo: ${transaccionesFallidas.length}');
   }
 }

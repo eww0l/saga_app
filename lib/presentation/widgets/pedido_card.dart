@@ -1,28 +1,37 @@
 import 'package:flutter/material.dart';
-import '../../../data/datasources/api_datasource.dart';
+import '../../../data/datasources/pedidos_datasource.dart';
 import '../../../data/models/pedido_model.dart';
 import '../../core/theme.dart';
-
+import 'package:image_picker/image_picker.dart';
+import 'dart:convert';
+import 'dart:io';
+import 'package:shared_preferences/shared_preferences.dart';
 class PedidoCard extends StatefulWidget {
   final PedidoModel pedido;
+  final String courierId;
+  final VoidCallback onEstadoActualizado;
 
-  const PedidoCard({super.key, required this.pedido});
+  const PedidoCard({
+    super.key, 
+    required this.pedido, 
+    required this.courierId,
+    required this.onEstadoActualizado, // ⚡ AMARRE EN EL CONSTRUCTOR
+  });
 
   @override
   State<PedidoCard> createState() => _PedidoCardState();
 }
 
 class _PedidoCardState extends State<PedidoCard> {
-  final ApiDatasource _apiDatasource = ApiDatasource();
+  final PedidosDatasource _apiDatasource = PedidosDatasource();
   late String _estadoActual;
 
   @override
   void initState() {
     super.initState();
-    _estadoActual = widget.pedido.estado; // Inicializamos el estado local
+    _estadoActual = widget.pedido.estado;
   }
 
-  // 💡 Muestra un menú de opciones al chofer para cambiar el estado
   void _mostrarOpcionesEstado(BuildContext context) {
     showModalBottomSheet(
       context: context,
@@ -43,7 +52,7 @@ class _PedidoCardState extends State<PedidoCard> {
                 const Divider(),
                 ListTile(
                   leading: const Icon(Icons.directions_run, color: Colors.blue),
-                  title: const Text('Poner En Ruta'),
+                  title: const Text('Poner En Ruta (Revertir estado)'),
                   onTap: () => _procesarCambioEstado(context, 'En Ruta'),
                 ),
                 ListTile(
@@ -64,41 +73,142 @@ class _PedidoCardState extends State<PedidoCard> {
     );
   }
 
-  // 💡 Procesa y valida las reglas de negocio antes de mandar los datos a Python
   void _procesarCambioEstado(BuildContext context, String nuevoEstado) async {
-    Navigator.pop(context); // Cierra el menú inferior
+    Navigator.pop(context); 
 
     String? motivo;
+    String? imagenBase64;
 
+    // 1️⃣ Validación de Contingencia (No Entregado)
     if (nuevoEstado == 'No Entregado') {
       motivo = await _solicitarMotivoContingencia(context);
       if (motivo == null || motivo.trim().isEmpty) {
-        _mostrarSnackBar('Operación cancelada. El motivo de contingencia es obligatorio.', esError: true);
+        _mostrarSnackBar('Operación cancelada. El motivo es obligatorio.', esError: true);
         return;
+      }
+    }
+
+    // 2️⃣ 📸 Captura de Evidencia Fotográfica Opcional (Igual que en gestión pedido)
+    if (nuevoEstado == 'Entregado' || nuevoEstado == 'No Entregado') {
+      bool? quiereTomarFoto = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (BuildContext context) {
+          return AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            title: const Text('Evidencia Fotográfica', style: TextStyle(fontWeight: FontWeight.bold)),
+            content: Text('¿Desea capturar una fotografía para respaldar el estado "$nuevoEstado"?'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('NO, OMITIR', style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold)),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(backgroundColor: SagaTheme.primaryGreen),
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('SÍ, CÁMARA', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+              ),
+            ],
+          );
+        },
+      );
+
+      if (quiereTomarFoto == true) {
+        try {
+          final picker = ImagePicker();
+          final XFile? foto = await picker.pickImage(
+            source: ImageSource.camera,
+            imageQuality: 50, // Comprimimos un poco más para que SharedPreferences no sufra en offline
+            maxWidth: 1000,
+          );
+
+          if (foto != null) {
+            final List<int> bytes = await File(foto.path).readAsBytes();
+            imagenBase64 = base64Encode(bytes);
+          }
+        } catch (e) {
+          _mostrarSnackBar('Error al acceder a la cámara: $e', esError: true);
+          return;
+        }
       }
     }
 
     _mostrarCargando();
 
+    // 📡 Verificamos la red ANTES de disparar para forzar tu bloque offline si no hay señal real
+    final bool tieneInternet = await _apiDatasource.verificarInternet();
+
+    if (!tieneInternet) {
+      // ❌ EJECUCIÓN OFFLINE DIRECTA (Forzamos la ejecución de tu bloque SharedPreferences sin pasar por la red)
+      _ejecutarSincronizacionLocal(nuevoEstado, motivo, imagenBase64);
+      return;
+    }
+
+    // 🌐 INTENTO ONLINE (Si el método dice que sí hay red)
     try {
       final exito = await _apiDatasource.actualizarEstadoPedido(
         pedidoId: widget.pedido.id,
         nuevoEstado: nuevoEstado,
+        courierId: widget.courierId,
         motivoContingencia: motivo,
+        fotoBase64: imagenBase64,
       );
 
       if (!mounted) return;
-      Navigator.pop(context); // Cierra el diálogo de carga
+      Navigator.pop(context); // Quita el loader
 
       if (exito) {
         setState(() {
-          _estadoActual = nuevoEstado; // Actualiza el color de la tarjeta en tiempo real
+          _estadoActual = nuevoEstado;
         });
-        _mostrarSnackBar('Estado actualizado a "$nuevoEstado" con éxito.');
+        _mostrarSnackBar('✅ Pedido actualizado en el servidor.');
       }
     } catch (e) {
-      if (mounted) Navigator.pop(context); // Cierra el diálogo de carga si falla
-      _mostrarSnackBar(e.toString().replaceAll('Exception: ', ''), esError: true);
+      // 🚨 CONTROL DE CAÍDAS DE RED: Si la red falló a mitad de camino o dio timeout
+      if (!mounted) return;
+      Navigator.pop(context); // Quita el loader
+
+      final errorMsg = e.toString().toLowerCase();
+      if (errorMsg.contains('timeout') || errorMsg.contains('socket') || errorMsg.contains('connection')) {
+        // Si el servidor falló por conectividad, lo metemos a la fuerza en tu SharedPreferences
+        _ejecutarSincronizacionLocal(nuevoEstado, motivo, imagenBase64);
+      } else {
+        // Si es un error real del backend (Ej: 400 Bad Request, 500 Interno), mostramos la alerta
+        _mostrarSnackBar(e.toString().replaceAll('Exception: ', ''), esError: true);
+      }
+    }
+  }
+
+  // 📦 Método interno para ejecutar la lógica de SharedPreferences de tu datasource
+  void _ejecutarSincronizacionLocal(String nuevoEstado, String? motivo, String? fotoBase64) async {
+    try {
+      if (mounted) Navigator.of(context, rootNavigator: true).pop(); 
+
+      await _apiDatasource.actualizarEstadoPedido(
+        pedidoId: widget.pedido.id,
+        nuevoEstado: nuevoEstado,
+        courierId: widget.courierId,
+        motivoContingencia: motivo,
+        fotoBase64: fotoBase64,
+      );
+
+      // 👁️ INSPECTOR DE SEGURIDAD (Agrega estas líneas):
+      final prefs = await SharedPreferences.getInstance();
+      final cola = prefs.getStringList('cola_actualizaciones') ?? [];
+      print('🔥 TOTAL DE PEDIDOS EN COLA OFFLINE: ${cola.length}');
+      if (cola.isNotEmpty) {
+        print('📦 ÚLTIMO REGISTRO EN DISCO: ${cola.last}');
+      }
+
+      setState(() { _estadoActual = nuevoEstado; });
+      _mostrarSnackBar('📦 Guardado en la cola local (Offline).');
+      widget.onEstadoActualizado();
+    } catch (localError) {
+      // Si algo falla aquí, también nos aseguramos de que no se quede colgado el loader
+      if (mounted && Navigator.canPop(context)) {
+        Navigator.pop(context);
+      }
+      _mostrarSnackBar('Error al guardar localmente: $localError', esError: true);
     }
   }
 
@@ -149,7 +259,8 @@ class _PedidoCardState extends State<PedidoCard> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(mensaje),
-        backgroundColor: esError ? SagaTheme.alertRed : Colors.green,
+        backgroundColor: esError ? SagaTheme.alertRed : (mensaje.contains('📦') ? Colors.orange[800] : Colors.green),
+        duration: const Duration(seconds: 3),
       ),
     );
   }
@@ -163,7 +274,7 @@ class _PedidoCardState extends State<PedidoCard> {
     }
   }
 
- @override
+  @override
   Widget build(BuildContext context) {
     final bool esAlta = widget.pedido.prioridad == 'Alta';
     final Color colorEstado = _obtenerColorEstado(_estadoActual);
@@ -182,7 +293,6 @@ class _PedidoCardState extends State<PedidoCard> {
               ),
             ),
           ),
-          // 💡 SOLUCIÓN: El ListTile ahora es el ÚNICO hijo (child) del Container
           child: ListTile(
             contentPadding: const EdgeInsets.all(16),
             title: Text(
@@ -194,9 +304,7 @@ class _PedidoCardState extends State<PedidoCard> {
               children: [
                 const SizedBox(height: 6),
                 Text('Código: ${widget.pedido.codigoBarra}', style: TextStyle(color: Colors.grey[600], fontSize: 13)),
-                
                 const SizedBox(height: 8),
-                // 📍 Dirección del Cliente
                 Row(
                   children: [
                     const Icon(Icons.location_on_outlined, size: 16, color: Colors.grey),
@@ -213,22 +321,7 @@ class _PedidoCardState extends State<PedidoCard> {
                     ),
                   ],
                 ),
-                
-                const SizedBox(height: 4),
-                // 🛰️ Coordenadas GPS
-                Row(
-                  children: [
-                    const Icon(Icons.pin_drop_outlined, size: 16, color: Colors.blueGrey),
-                    const SizedBox(width: 6),
-                    Text(
-                      'Lat: ${widget.pedido.latitud}  |  Lng: ${widget.pedido.longitud}',
-                      style: TextStyle(fontSize: 11, color: Colors.grey[600], fontFamily: 'monospace'),
-                    ),
-                  ],
-                ),
-                
                 const SizedBox(height: 10),
-                // 🏷️ Estado del pedido
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
@@ -249,4 +342,5 @@ class _PedidoCardState extends State<PedidoCard> {
         ),
       ),
     );
-  }}
+  }
+}

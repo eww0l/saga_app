@@ -8,17 +8,18 @@ class GestionPedidoController extends ChangeNotifier {
   bool _isSaving = false;
   String? _errorMessage;
 
-  bool get isSaving => _isSaving; // O isSaving según lo tengas expuesto
+  bool get isSaving => _isSaving;
   bool get isSavingState => _isSaving;
   String? get errorMessage => _errorMessage;
 
-  // 🚀 Ahora requiere el courierId de la sesión de la UI
   Future<bool> actualizarEstado({
     required PedidoModel pedido,
     required String nuevoEstado,
-    required String courierId, // 🔒 Candado de sesión integrado
+    required String courierId, 
     String? motivo,
+    String? fotoBase64, 
   }) async {
+    // 🔒 El motivo sigue siendo obligatorio solo si es un fallo
     if (nuevoEstado == 'No Entregado' && (motivo == null || motivo.trim().isEmpty)) {
       _errorMessage = 'El motivo de contingencia es obligatorio para estados fallidos.';
       notifyListeners();
@@ -33,8 +34,9 @@ class GestionPedidoController extends ChangeNotifier {
       final exito = await _datasource.actualizarEstadoPedido(
         pedidoId: pedido.id,
         nuevoEstado: nuevoEstado,
-        courierId: courierId, // 🚀 Pasamos el parámetro requerido
+        courierId: courierId, 
         motivoContingencia: nuevoEstado == 'No Entregado' ? motivo : null,
+        fotoBase64: fotoBase64, // 🚀 Viaja limpio al datasource (sea el estado que sea)
       );
 
       _isSaving = false;

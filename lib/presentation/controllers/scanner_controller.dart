@@ -18,7 +18,7 @@ class ScannerController extends ChangeNotifier {
   String? get errorMessage => _errorMessage;
   
 
-  // 📡 Modificado para enviar parámetros B2B al datasource
+  // 📡 Modificado para enviar parámetros B2B al datasource con desempaque seguro
   Future<PedidoModel?> escanearCodigo(String codigo, {required String courierId, required String empresa}) async {
     if (_isProcessing || _isDisposed) return null;
 
@@ -28,19 +28,28 @@ class ScannerController extends ChangeNotifier {
 
     try {
       // 🔒 Inyectamos seguridad B2B en la consulta
-      final jsonPedido = await _datasource.buscarPedidoPorCodigo(
+      final dynamic jsonPedido = await _datasource.buscarPedidoPorCodigo(
         codigo,
         courierId: courierId,
         empresa: empresa,
       );
       
-      if (_isDisposed) return null; // Guardavía por si el widget murió durante la petición HTTP
+      if (_isDisposed) return null; 
       
-      final Map<String, dynamic> mapaCorrecto = (jsonPedido.containsKey('pedido'))
-          ? jsonPedido['pedido'] as Map<String, dynamic>
-          : jsonPedido;
+      Map<String, dynamic> mapaCorrecto;
 
-      if (mapaCorrecto.isEmpty) {
+      // 🧠 NORMALIZACIÓN EXTREMA DE MAPAS (Evita crasheos por anidación)
+      if (jsonPedido is Map<String, dynamic>) {
+        if (jsonPedido.containsKey('pedido') && jsonPedido['pedido'] is Map) {
+          mapaCorrecto = Map<String, dynamic>.from(jsonPedido['pedido'] as Map);
+        } else {
+          mapaCorrecto = jsonPedido;
+        }
+      } else {
+        throw Exception("Estructura de respuesta inválida del sistema.");
+      }
+
+      if (mapaCorrecto.isEmpty || !mapaCorrecto.containsKey('id')) {
         throw Exception("El paquete no cuenta con información válida en el sistema.");
       }
 

@@ -51,6 +51,8 @@ dependencies:
   latlong2: ^0.9.1
   shared_preferences: ^2.3.5  # Para guardar el JSON crudo de los pedidos en el disco duro
   connectivity_plus: ^6.1.3
+  image_picker: ^1.2.2
+  path_provider: ^2.1.5
 
 dev_dependencies:
   flutter_test:

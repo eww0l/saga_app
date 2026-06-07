@@ -65,12 +65,15 @@ class _HomeScreenState extends State<HomeScreen> {
           padding: const EdgeInsets.only(top: 8, bottom: 16),
           itemCount: _controller.pedidos.length,
           itemBuilder: (context, index) {
-            // 🚀 SOLUCIÓN DEFINITIVA: Inyectamos los 3 parámetros requeridos por el constructor
+            final pedidoItem = _controller.pedidos[index];
+            
+            // 🚀 EL REMEDIO SANTO: Inyectamos ValueKey con el id real del pedido.
+            // Esto destruye el parpadeo porque obliga a Flutter a seguir el objeto, no la casilla.
             return PedidoCard(
-              pedido: _controller.pedidos[index],
+              key: ValueKey('pedido_${pedidoItem.id}'), 
+              pedido: pedidoItem,
               courierId: widget.courierId, 
               onEstadoActualizado: () {
-                // Cada vez que la tarjeta mute (Online u Offline), fuerza al HomeController a refrescar el listado
                 _controller.actualizarDatos(widget.courierId, widget.empresa);
               },
             );

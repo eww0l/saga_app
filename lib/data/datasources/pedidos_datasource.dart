@@ -137,8 +137,28 @@ class PedidosDatasource extends BaseDatasource {
 
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = json.decode(response.body);
-        return data['status'] == 'success';
-      } else {
+        final bool esExito = data['status'] == 'success';
+
+        // 🚀 EL PARCHE: Declaramos prefs y actualizamos la caché local al instante
+        if (esExito) {
+          final prefs = await SharedPreferences.getInstance(); // <-- AQUÍ ESTÁ SU PASAPORTE
+          final String cacheKey = 'cache_pedidos_$courierId';
+          final String? jsonLocal = prefs.getString(cacheKey);
+          if (jsonLocal != null) {
+            Map<String, dynamic> cacheData = json.decode(jsonLocal);
+            List<dynamic> pedidosCache = cacheData['pedidos'] ?? [];
+            for (var p in pedidosCache) {
+              if (p['id'] == pedidoId) {
+                p['estado'] = nuevoEstado;
+                if (fotoBase64 != null) p['evidencia_url'] = 'local_cached_image';
+              }
+            }
+            await prefs.setString(cacheKey, json.encode(cacheData));
+          }
+        }
+
+        return esExito;
+      }else {
         final Map<String, dynamic> errorBody = json.decode(response.body);
         throw Exception(errorBody['detail'] ?? 'Error al actualizar estado');
       }

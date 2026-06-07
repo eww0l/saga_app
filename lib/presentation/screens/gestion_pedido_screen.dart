@@ -5,15 +5,20 @@ import '../../core/theme.dart';
 
 class GestionPedidoScreen extends StatefulWidget {
   final PedidoModel pedido;
+  final String courierId; // 🔒 Recibe el ID de sesión del transportista
 
-  const GestionPedidoScreen({super.key, required this.pedido});
+  const GestionPedidoScreen({
+    super.key, 
+    required this.pedido,
+    required this.courierId,
+  });
 
   @override
   State<GestionPedidoScreen> createState() => _GestionPedidoScreenState();
 }
 
+// 🛠️ CORRECCIÓN: Eliminada la clase fantasma de mapas. Declaración limpia del State:
 class _GestionPedidoScreenState extends State<GestionPedidoScreen> {
-  // 🔒 El controlador ahora vive de forma segura dentro del ciclo de vida del State
   late final GestionPedidoController _controller;
   
   String? _estadoSeleccionado;
@@ -35,9 +40,11 @@ class _GestionPedidoScreenState extends State<GestionPedidoScreen> {
 
   @override
   void dispose() {
-    _controller.dispose(); // Limpieza obligatoria para evitar fugas de memoria
+    _controller.dispose(); 
     super.dispose();
   }
+
+  // ... El resto de tu método @override Widget build(BuildContext context) se queda exactamente igual abajo
 
   @override
   Widget build(BuildContext context) {
@@ -51,7 +58,7 @@ class _GestionPedidoScreenState extends State<GestionPedidoScreen> {
       body: ListenableBuilder(
         listenable: _controller,
         builder: (context, _) {
-          if (_controller.isSaving) {
+          if (_controller.isSavingState) {
             return const Center(child: CircularProgressIndicator(color: Colors.green));
           }
 
@@ -148,12 +155,13 @@ class _GestionPedidoScreenState extends State<GestionPedidoScreen> {
                         return;
                       }
 
-                      // Guardamos la referencia local del contexto antes del proceso asíncrono
                       final localContext = context;
 
+                      // 🔒 SOLUCCIÓN INTERNA: Pasamos el courierId inyectado desde la vista anterior
                       final exito = await _controller.actualizarEstado(
                         pedido: widget.pedido,
                         nuevoEstado: _estadoSeleccionado!,
+                        courierId: widget.courierId, 
                         motivo: _motivoContingencia,
                       );
 

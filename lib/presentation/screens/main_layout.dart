@@ -56,8 +56,8 @@ class _MainLayoutState extends State<MainLayout> {
   List<Widget> _getScreens() {
     return [
       HomeScreen(courierId: widget.courierId, empresa: widget.empresa), 
-      MapScreen(courierId: widget.courierId, empresa: widget.empresa),                     
-      const ScannerScreen(),                 
+      MapScreen(courierId: widget.courierId, empresa: widget.empresa),                    
+      ScannerScreen(courierId: widget.courierId, empresa: widget.empresa), // 🚀 SOLUCCIÓN: Pasamos las Query Params de sesión requeridas
     ];
   }
 

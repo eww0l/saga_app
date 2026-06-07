@@ -47,12 +47,10 @@ class PedidosDatasource extends BaseDatasource {
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
 
-      // Verificación de seguridad por si las credenciales fallan en caliente
       if (data is Map && data.containsKey('error_detectado')) {
         throw Exception(data['error_detectado']);
       }
 
-      // Persistimos en disco duro del móvil para contingencias sin cobertura
       await prefs.setString(cacheKey, response.body);
 
       final List pedidosJson = data['pedidos'] ?? [];
@@ -68,11 +66,12 @@ class PedidosDatasource extends BaseDatasource {
   }
 
   // ==========================================================================
-  // 2️⃣ ACTUALIZAR ESTADO DEL PEDIDO (Con Soporte de Cola Transaccional Offline)
+  // 2️⃣ ACTUALIZAR ESTADO DEL PEDIDO (🔒 CORREGIDO: Con firma de Courier)
   // ==========================================================================
   Future<bool> actualizarEstadoPedido({
     required int pedidoId,
     required String nuevoEstado,
+    required String courierId, // 🔒 Parámetro obligatorio integrado
     String? motivoContingencia,
   }) async {
     final bool tieneInternet = await verificarInternet();
@@ -85,6 +84,7 @@ class PedidosDatasource extends BaseDatasource {
       Map<String, dynamic> transaccionOffline = {
         'pedido_id': pedidoId,
         'nuevo_estado': nuevoEstado,
+        'courier_id': courierId, // Guardamos el dueño del cambio en la cola
         'motivo_contingencia': motivoContingencia ?? '',
         'timestamp': DateTime.now().toIso8601String(),
       };
@@ -92,7 +92,6 @@ class PedidosDatasource extends BaseDatasource {
       colaPendientes.add(json.encode(transaccionOffline));
       await prefs.setStringList('cola_actualizaciones', colaPendientes);
 
-      // Barremos las SharedPreferences para mutar el estado localmente de inmediato
       final keys = prefs.getKeys();
       for (String key in keys) {
         if (key.startsWith('cache_pedidos_')) {
@@ -112,9 +111,9 @@ class PedidosDatasource extends BaseDatasource {
       return true; 
     }
 
-    // 🌐 CASO ONLINE: Mutación síncrona en Supabase
+    // 🌐 CASO ONLINE: Mutación síncrona añadiendo validación courier_id
     try {
-      String urlString = '$baseUrl/pedidos/$pedidoId/estado?nuevo_estado=$nuevoEstado';
+      String urlString = '$baseUrl/pedidos/$pedidoId/estado?nuevo_estado=$nuevoEstado&courier_id=$courierId';
       if (motivoContingencia != null && motivoContingencia.trim().isNotEmpty) {
         urlString += '&motivo_contingencia=${Uri.encodeComponent(motivoContingencia)}';
       }
@@ -135,9 +134,13 @@ class PedidosDatasource extends BaseDatasource {
   }
 
   // ==========================================================================
-  // 3️⃣ BUSCADOR POR CÓDIGO DE BARRAS (Soporta escaneo asíncrono e indexación local)
+  // 3️⃣ BUSCADOR POR CÓDIGO DE BARRAS (🔒 CORREGIDO: Filtro B2B integrado)
   // ==========================================================================
-  Future<Map<String, dynamic>> buscarPedidoPorCodigo(String codigoBarra) async {
+  Future<Map<String, dynamic>> buscarPedidoPorCodigo(
+    String codigoBarra, {
+    required String courierId, // 🔒 Parámetro obligatorio integrado
+    required String empresa,   // 🔒 Parámetro obligatorio integrado
+  }) async {
     final bool tieneInternet = await verificarInternet();
 
     // ❌ CASO OFFLINE: Indexa sobre la caché guardada en disco
@@ -163,17 +166,19 @@ class PedidosDatasource extends BaseDatasource {
       throw Exception("Modo Offline: El paquete $codigoBarra no figura en la carga local.");
     }
 
-    // 🌐 CASO ONLINE: Consulta directa al endpoint de escaneo
+    // 🌐 CASO ONLINE: Consulta directa inyectando credenciales de sesión en Query
     try {
-      final url = Uri.parse('$baseUrl/pedidos/escanear/$codigoBarra');
+      final url = Uri.parse(
+        '$baseUrl/pedidos/escanear/$codigoBarra?courier_id=$courierId&empresa=${Uri.encodeComponent(empresa)}'
+      );
       final response = await http.get(url);
 
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = json.decode(response.body);
         return data['pedido'] ?? {};
-      } else if (response.statusCode == 404) {
+      } else if (response.statusCode == 403 || response.statusCode == 404) {
         final Map<String, dynamic> errorBody = json.decode(response.body);
-        throw Exception(errorBody['detail'] ?? 'El paquete no existe en el sistema.');
+        throw Exception(errorBody['detail'] ?? 'Error de validación del paquete.');
       } else {
         throw Exception('Error del servidor: Código ${response.statusCode}');
       }
@@ -215,7 +220,7 @@ class PedidosDatasource extends BaseDatasource {
   }
 
   // ==========================================================================
-  // 🔄 5️⃣ SINCRONIZADOR DE COLA OFFLINE (Vaciado transaccional al recuperar red)
+  // 🔄 5️⃣ SINCRONIZADOR DE COLA OFFLINE (🔒 CORREGIDO: Lee courier_id de la cola)
   // ==========================================================================
   Future<void> sincronizarColaPendiente() async {
     final bool tieneInternet = await verificarInternet();
@@ -230,7 +235,8 @@ class PedidosDatasource extends BaseDatasource {
     for (String txString in colaPendientes) {
       try {
         final Map<String, dynamic> tx = json.decode(txString);
-        String urlString = '$baseUrl/pedidos/${tx['pedido_id']}/estado?nuevo_estado=${tx['nuevo_estado']}';
+        // Extraemos el dueño de la transacción offline mapeado en la cola
+        String urlString = '$baseUrl/pedidos/${tx['pedido_id']}/estado?nuevo_estado=${tx['nuevo_estado']}&courier_id=${tx['courier_id'] ?? ''}';
         
         if (tx['motivo_contingencia'] != null && tx['motivo_contingencia'].toString().trim().isNotEmpty) {
           urlString += '&motivo_contingencia=${Uri.encodeComponent(tx['motivo_contingencia'])}';

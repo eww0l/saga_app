@@ -8,14 +8,20 @@ import 'gestion_pedido_screen.dart';
 import '../../data/models/pedido_model.dart';
 
 class ScannerScreen extends StatefulWidget {
-  const ScannerScreen({super.key});
+  final String courierId; // 🔒 NUEVO: Recibe el ID de sesión del transportista
+  final String empresa;   // 🔒 NUEVO: Recibe la empresa activa en el Login
+
+  const ScannerScreen({
+    super.key,
+    required this.courierId,
+    required this.empresa,
+  });
 
   @override
   State<ScannerScreen> createState() => _ScannerScreenState();
 }
 
 class _ScannerScreenState extends State<ScannerScreen> {
-  // 🧠 Consumimos de forma segura tu ScannerController estructurado con PedidoModel
   final ScannerController _logicaController = ScannerController();
   
   final MobileScannerController _scannerController = MobileScannerController(
@@ -25,7 +31,6 @@ class _ScannerScreenState extends State<ScannerScreen> {
   @override
   void initState() {
     super.initState();
-    // Escuchamos el controlador para redibujar la UI cuando cambie la carga temporal
     _logicaController.addListener(() {
       if (mounted) setState(() {});
     });
@@ -43,13 +48,16 @@ class _ScannerScreenState extends State<ScannerScreen> {
 
     _mostrarCargando();
 
-    // 🚀 Consumimos tu método original tipado
-    final PedidoModel? pedido = await _logicaController.escanearCodigo(codigo);
+    // 🚀 SOLUCIÓN 1: Pasamos los parámetros obligatorios de sesión al controlador
+    final PedidoModel? pedido = await _logicaController.escanearCodigo(
+      codigo,
+      courierId: widget.courierId,
+      empresa: widget.empresa,
+    );
 
     if (!mounted) return;
     Navigator.pop(context); // Cierra el spinner de carga de forma segura
 
-    // Evaluamos si el controlador capturó un error de negocio o duplicado
     if (_logicaController.errorMessage != null) {
       _mostrarErrorScan(_logicaController.errorMessage!);
       return;
@@ -77,7 +85,6 @@ class _ScannerScreenState extends State<ScannerScreen> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (context) {
-        // Inyectamos tu widget estructurado pasando el controlador lógico compartido
         return ScannerManifestSheet(controller: _logicaController);
       },
     );
@@ -147,13 +154,16 @@ class _ScannerScreenState extends State<ScannerScreen> {
                         padding: const EdgeInsets.symmetric(vertical: 14),
                       ),
                       onPressed: () async {
-                        // Resguardamos de forma segura el contexto local del árbol antes de saltar pantallas
                         final navContext = Navigator.of(context);
                         navContext.pop(); 
                         
+                        // 🚀 SOLUCIÓN 2: Inyectamos el courierId requerido al constructor de GestionPedidoScreen
                         final resultado = await navContext.push(
                           MaterialPageRoute(
-                            builder: (context) => GestionPedidoScreen(pedido: pedido),
+                            builder: (context) => GestionPedidoScreen(
+                              pedido: pedido,
+                              courierId: widget.courierId,
+                            ),
                           ),
                         );
 
@@ -204,14 +214,14 @@ class _ScannerScreenState extends State<ScannerScreen> {
   void _procesarDespachoEnRuta() async {
     _mostrarCargando(); 
     
-    // Almacenamos los contextos locales para evitar fallos si cambia el hardware de la cámara
     final localContext = context;
     final scaffoldMessenger = ScaffoldMessenger.of(context);
 
-    final exito = await _logicaController.confirmarDespacho();
+    // 🚀 SOLUCIÓN 3: Enviamos el courierId requerido para procesar el lote masivo
+    final exito = await _logicaController.confirmarDespacho(courierId: widget.courierId);
 
     if (!mounted) return;
-    Navigator.pop(localContext); // Destruye el diálogo de carga asíncrona
+    Navigator.pop(localContext); 
 
     if (exito) {
       scaffoldMessenger.showSnackBar(
@@ -234,17 +244,29 @@ class _ScannerScreenState extends State<ScannerScreen> {
   }
 
   void _mostrarErrorScan(String error) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(error), backgroundColor: Colors.red),
-    );
-  }
+  // 🔒 CONTROL DE SEGURIDAD VISTA: Si la pantalla ya no está montada, no pintes nada
+  if (!mounted) return;
+
+  // 🧹 Limpia de inmediato cualquier SnackBar viejo que esté colgado en pantalla
+  ScaffoldMessenger.of(context).clearSnackBars(); 
+
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      content: Text(
+        error,
+        style: const TextStyle(fontWeight: FontWeight.bold),
+      ), 
+      backgroundColor: Colors.red.shade800,
+      duration: const Duration(seconds: 2), // ⏱️ Lo alineamos exactamente al tiempo de enfriamiento
+    ),
+  );
+}
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: Column(
         children: [
-          // 🎥 CAPA SUPERIOR: Sensor y cámara nativa
           Expanded(
             flex: 7,
             child: Stack(
@@ -258,7 +280,6 @@ class _ScannerScreenState extends State<ScannerScreen> {
                     }
                   },
                 ),
-                // Consumo de tu archivo independiente de máscara geométrica
                 Positioned.fill(
                   child: Container(
                     decoration: const ShapeDecoration(
@@ -285,8 +306,6 @@ class _ScannerScreenState extends State<ScannerScreen> {
               ],
             ),
           ),
-          
-          // 📦 CAPA INFERIOR: Panel de control e interacciones
           Expanded(
             flex: 3,
             child: Container(

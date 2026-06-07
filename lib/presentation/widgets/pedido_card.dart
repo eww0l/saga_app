@@ -6,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'package:shared_preferences/shared_preferences.dart';
+
 class PedidoCard extends StatefulWidget {
   final PedidoModel pedido;
   final String courierId;
@@ -318,6 +319,18 @@ class _PedidoCardState extends State<PedidoCard> {
                         overflow: TextOverflow.ellipsis,
                         maxLines: 2,
                       ),
+                    ),
+                  ],
+                ),
+                // 🚀 AGREGADO: Inyección limpia de Coordenadas requeridas para el Courier
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    const Icon(Icons.map_outlined, size: 16, color: Colors.grey),
+                    const SizedBox(width: 6),
+                    Text(
+                      'Lat: ${widget.pedido.latitud.toStringAsFixed(6)} / Lng: ${widget.pedido.longitud.toStringAsFixed(6)}',
+                      style: TextStyle(color: Colors.grey[700], fontSize: 12, fontStyle: FontStyle.italic),
                     ),
                   ],
                 ),

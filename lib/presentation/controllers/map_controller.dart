@@ -3,20 +3,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
-
-import '../../core/theme.dart';
-import '../../../data/datasources/pedidos_datasource.dart'; 
+import '../../../data/datasources/pedidos_datasource.dart';
 import '../../../data/models/pedido_model.dart';
+import '../../core/theme.dart';
 
-// ==========================================================================
-// 🧠 CONTROLADOR: Gestión de hardware GPS y descarga de rutas FastAPI/OSRM
-// ==========================================================================
 class MapScreenController extends ChangeNotifier {
   final PedidosDatasource _datasource = PedidosDatasource();
   final MapController flutterMapController = MapController();
-
-  // 🔒 Bandera de control para evitar ejecuciones post-dispose (Race conditions)
-  bool _isDisposed = false;
 
   LatLng miUbicacion = const LatLng(-12.046374, -77.042793);
   
@@ -32,8 +25,6 @@ class MapScreenController extends ChangeNotifier {
 
   // 🛰️ GPS manual inicial e interpretación de datos
   Future<void> inicializarGpsYViaje(String courierId, String empresa) async {
-    if (_isDisposed) return; 
-
     LocationPermission permiso = await Geolocator.checkPermission();
 
     if (permiso == LocationPermission.denied) {
@@ -41,7 +32,6 @@ class MapScreenController extends ChangeNotifier {
     }
 
     if (permiso == LocationPermission.denied || permiso == LocationPermission.deniedForever) {
-      if (_isDisposed) return;
       cargando = false;
       notifyListeners();
       return;
@@ -52,7 +42,6 @@ class MapScreenController extends ChangeNotifier {
         desiredAccuracy: LocationAccuracy.high,
       );
 
-      if (_isDisposed) return; 
       miUbicacion = LatLng(posicion.latitude, posicion.longitude);
 
       if (mapaListo) {
@@ -61,7 +50,6 @@ class MapScreenController extends ChangeNotifier {
 
       await descargarEInterpretarRuta(courierId, empresa);
     } catch (e) {
-      if (_isDisposed) return;
       cargando = false;
       notifyListeners();
     }
@@ -69,8 +57,6 @@ class MapScreenController extends ChangeNotifier {
 
   // 📡 Tracking en tiempo real continuado
   void iniciarTrackingEnTiempoReal(String courierId, String empresa) async {
-    if (_isDisposed) return;
-
     LocationPermission permiso = await Geolocator.checkPermission();
 
     if (permiso == LocationPermission.denied || permiso == LocationPermission.deniedForever) {
@@ -87,8 +73,6 @@ class MapScreenController extends ChangeNotifier {
     );
 
     _gpsSubscription = _gpsStream!.listen((Position posicion) async {
-      if (_isDisposed) return; // 🔒 Si el chofer cambió de pestaña, frena de inmediato
-
       miUbicacion = LatLng(posicion.latitude, posicion.longitude);
 
       if (mapaListo) {
@@ -101,7 +85,7 @@ class MapScreenController extends ChangeNotifier {
 
   // 🧠 Ruta + marcadores secuenciales (FastAPI/OSRM)
   Future<void> descargarEInterpretarRuta(String courierId, String empresa) async {
-    if (_isDisposed || actualizando) return;
+    if (actualizando) return;
     actualizando = true;
 
     try {
@@ -111,8 +95,6 @@ class MapScreenController extends ChangeNotifier {
         latGps: miUbicacion.latitude,
         lngGps: miUbicacion.longitude,
       );
-
-      if (_isDisposed) return; // 🔒 Si la API demoró y la pantalla ya murió, no procesa
 
       final List<PedidoModel> pedidos = (data['pedidos'] as List<PedidoModel>)
           .where((p) => p.estado != 'Entregado' && p.estado != 'No Entregado' && p.estado != 'Asignado')
@@ -173,15 +155,11 @@ class MapScreenController extends ChangeNotifier {
       cargando = false;
       actualizando = false;
     } catch (e) {
-      if (_isDisposed) return;
       cargando = false;
       actualizando = false;
       debugPrint("ERROR MAPA: $e");
     }
-
-    if (!_isDisposed) {
-      notifyListeners(); // 🔔 Solo notifica si el controlador sigue vivo
-    }
+    notifyListeners();
   }
 
   void cerrarSuscripciones() {
@@ -189,88 +167,5 @@ class MapScreenController extends ChangeNotifier {
       _gpsSubscription!.cancel();
     }
     flutterMapController.dispose();
-  }
-
-  @override
-  void dispose() {
-    _isDisposed = true; // Cambia la bandera de seguridad al destruirse
-    if (_gpsSubscription != null) {
-      _gpsSubscription!.cancel();
-    }
-    super.dispose();
-  }
-}
-
-// ==========================================================================
-// 📺 VISTA PÚBLICA: Cascarón del Widget
-// ==========================================================================
-class MapScreen extends StatefulWidget {
-  final String courierId;
-  final String empresa;
-
-  const MapScreen({
-    super.key,
-    required this.courierId,
-    required this.empresa,
-  });
-
-  @override
-  State<MapScreen> createState() => _MapScreenState();
-}
-
-// ==========================================================================
-// 📺 ESTADO DE LA VISTA: Enlace reactivo al controlador
-// ==========================================================================
-class _MapScreenState extends State<MapScreen> {
-  final MapScreenController _controller = MapScreenController();
-
-  @override
-  void initState() {
-    super.initState();
-    _controller.inicializarGpsYViaje(widget.courierId, widget.empresa);
-    _controller.iniciarTrackingEnTiempoReal(widget.courierId, widget.empresa);
-
-    _controller.addListener(() {
-      if (mounted) setState(() {});
-    });
-  }
-
-  @override
-  void dispose() {
-    _controller.cerrarSuscripciones();
-    _controller.dispose(); // 🔒 Destrucción segura encadenada
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: _controller.cargando
-          ? const Center(child: CircularProgressIndicator())
-          : FlutterMap(
-              mapController: _controller.flutterMapController,
-              options: MapOptions(
-                initialCenter: _controller.miUbicacion,
-                initialZoom: 13.5,
-                onMapReady: () {
-                  _controller.mapaListo = true;
-                },
-              ),
-              children: [
-                TileLayer(
-                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                  userAgentPackageName: 'com.saga.app',
-                ),
-                PolylineLayer(polylines: _controller.polilineasRuta),
-                MarkerLayer(markers: _controller.marcadores),
-              ],
-            ),
-      floatingActionButton: FloatingActionButton(
-        backgroundColor: SagaTheme.primaryGreen,
-        foregroundColor: Colors.white,
-        onPressed: () => _controller.inicializarGpsYViaje(widget.courierId, widget.empresa),
-        child: const Icon(Icons.gps_fixed),
-      ),
-    );
   }
 }

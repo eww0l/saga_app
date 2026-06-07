@@ -5,7 +5,6 @@ class PedidoModel {
   final String estado;
   final String prioridad;
   final int intentosEntrega;
-
   final String nombreCliente;
   final String direccionCliente;
   final double latitud;
@@ -24,35 +23,43 @@ class PedidoModel {
     required this.longitud,
   });
 
+  // 📡 Constructor Factory: Convierte el JSON relacional de FastAPI a objeto Dart
   factory PedidoModel.fromJson(Map<String, dynamic> json) {
-    final clienteMap = json['clientes'] ?? {};
+    final cliente = json['clientes'] ?? {};
 
     return PedidoModel(
-      id: _toInt(json['id']),
+      id: _parseToInt(json['id']),
       codigoBarra: json['codigo_barra']?.toString() ?? '',
       descripcionProducto: json['descripcion_producto']?.toString() ?? '',
       estado: json['estado']?.toString() ?? 'Asignado',
       prioridad: json['prioridad']?.toString() ?? 'Baja',
-      intentosEntrega: _toInt(json['intentos_entrega']),
-
-      nombreCliente: clienteMap['nombre']?.toString() ?? 'No especificado',
-
-      direccionCliente:
-          '${clienteMap['direccion'] ?? ''}, ${clienteMap['distrito'] ?? ''}',
-
-      latitud: _toDouble(clienteMap['latitud']),
-      longitud: _toDouble(clienteMap['longitud']),
+      intentosEntrega: _parseToInt(json['intentos_entrega']),
+      nombreCliente: cliente['nombre']?.toString() ?? 'No especificado',
+      direccionCliente: '${cliente['direccion'] ?? ''}, ${cliente['distrito'] ?? ''}'.trim(),
+      latitud: _parseToDouble(cliente['latitud']),
+      longitud: _parseToDouble(cliente['longitud']),
     );
   }
 
-  // 🔒 Helpers blindados contra Supabase / String / null / int / double
-  static int _toInt(dynamic value) {
-    if (value == null) return 0;
-    return int.tryParse(value.toString()) ?? 0;
-  }
-
-  static double _toDouble(dynamic value) {
-    if (value == null) return 0.0;
-    return double.tryParse(value.toString()) ?? 0.0;
+  // 💾 NUEVO MÉTODO TOJSON: Crucial para persistir cambios en SharedPreferences (Modo Offline)
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'codigo_barra': codigoBarra,
+      'descripcion_producto': descripcionProducto,
+      'estado': estado,
+      'prioridad': prioridad,
+      'intentos_entrega': intentosEntrega,
+      'clientes': {
+        'nombre': nombreCliente,
+        'direccion': direccionCliente, // Al guardar localmente, la dirección ya va unificada
+        'latitud': latitud,
+        'longitud': longitud,
+      }
+    };
   }
 }
+
+// 🔒 Helpers globales compactos (Expresiones de una sola línea, más limpios)
+int _parseToInt(dynamic value) => value == null ? 0 : (int.tryParse(value.toString()) ?? 0);
+double _parseToDouble(dynamic value) => value == null ? 0.0 : (double.tryParse(value.toString()) ?? 0.0);

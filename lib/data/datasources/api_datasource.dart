@@ -5,8 +5,8 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import '../models/pedido_model.dart';
 
 class ApiDatasource {
-  // final String baseUrl = "https://saga-api-546y.onrender.com/api";
-  final String baseUrl = "http://192.168.1.18:8000/api";
+  final String baseUrl = "https://saga-api-546y.onrender.com/api";
+  //  final String baseUrl = "http://192.168.1.18:8000/api";
 
   // 🛠️ FUNCIÓN AUXILIAR: Verifica si el dispositivo tiene internet real
   Future<bool> _verificarInternet() async {
